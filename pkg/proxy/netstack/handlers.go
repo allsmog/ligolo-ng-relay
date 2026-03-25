@@ -176,6 +176,10 @@ func HandlePacket(nstack *stack.Stack, localConn TunConn, yamuxConn *yamux.Sessi
 			}
 
 		}()
+	} else if localConn.IsUDP() && reply.Reset {
+		// Agent got ECONNREFUSED on UDP — send ICMP Port Unreachable back
+		// so scanners like nmap can detect closed ports instantly.
+		SendICMPPortUnreachable(nstack, localConn.GetUDP().EndpointID)
 	} else {
 		localConn.Terminate(reply.Reset)
 	}
