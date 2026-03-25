@@ -39,8 +39,8 @@ type LigoloAgent struct {
 	RelayCapable    bool
 	RelayActive     bool
 	RelayListenAddr string
-	RelayControl    net.Conn       `json:"-"`
-	ParentAgentID   string         // SessionID of the relay agent (empty if direct)
+	RelayControl    net.Conn `json:"-"`
+	ParentAgentID   string   // SessionID of the relay agent (empty if direct)
 }
 
 func (la *LigoloAgent) Alive() bool {
