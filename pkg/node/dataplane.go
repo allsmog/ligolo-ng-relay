@@ -75,12 +75,23 @@ func HandlePacket(srv *Server, sess *session.Session, nstack *stack.Stack, local
 		targetIP = "127.0.0.1"
 	}
 
-	stream, reset, err := srv.OpenConnect(ctx, sess, wire.ConnectRequest{
+	req := wire.ConnectRequest{
 		Net:       protoNet,
 		Transport: protoTransport,
 		Address:   targetIP,
 		Port:      endpointID.LocalPort,
-	})
+	}
+
+	// UDP-over-datagram fast path: when negotiated, carry the flow over the
+	// transport's datagram channel instead of a reliable stream.
+	if localConn.IsUDP() {
+		if hub := srv.dgramHubFor(sess.ID); hub != nil {
+			handleUDPDatagram(ctx, srv, sess, hub, nstack, localConn, req)
+			return
+		}
+	}
+
+	stream, reset, err := srv.OpenConnect(ctx, sess, req)
 	if err != nil {
 		if err == ErrConnectFailed {
 			localConn.Terminate(reset)
@@ -109,6 +120,28 @@ func HandlePacket(srv *Server, sess *session.Session, nstack *stack.Stack, local
 		}
 		go relay.StartRelay(stream, gonet.NewUDPConn(nstack, &wq, ep))
 	}
+}
+
+func handleUDPDatagram(ctx context.Context, srv *Server, sess *session.Session, hub *dgramHub, nstack *stack.Stack, localConn netstack.TunConn, req wire.ConnectRequest) {
+	setup, fc, reset, err := srv.OpenDatagramFlow(ctx, sess, hub, req)
+	if err != nil {
+		if err == ErrConnectFailed {
+			localConn.Terminate(reset)
+		} else {
+			logrus.Debugf("udp datagram flow setup failed: %v", err)
+			localConn.Terminate(false)
+		}
+		return
+	}
+	var wq waiter.Queue
+	ep, iperr := localConn.GetUDP().Request.CreateEndpoint(&wq)
+	if iperr != nil {
+		setup.Close()
+		fc.Close()
+		localConn.Terminate(false)
+		return
+	}
+	go bindDatagramFlow(setup, gonet.NewUDPConn(nstack, &wq, ep), fc)
 }
 
 func handleICMP(ctx context.Context, srv *Server, sess *session.Session, nstack *stack.Stack, localConn netstack.TunConn) {

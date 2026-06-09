@@ -74,6 +74,35 @@ type Server struct {
 	submu sync.Mutex
 	subs  map[int]chan Event
 	subID int
+
+	dgmu   sync.Mutex
+	dgrams map[string]*dgramHub // sessionID -> datagram hub (when negotiated)
+}
+
+// dgramHubFor returns the datagram hub for a session, or nil if UDP-over-
+// datagram is not active for it.
+func (s *Server) dgramHubFor(sessionID string) *dgramHub {
+	s.dgmu.Lock()
+	defer s.dgmu.Unlock()
+	return s.dgrams[sessionID]
+}
+
+func (s *Server) setDgramHub(sessionID string, h *dgramHub) {
+	s.dgmu.Lock()
+	if s.dgrams == nil {
+		s.dgrams = make(map[string]*dgramHub)
+	}
+	s.dgrams[sessionID] = h
+	s.dgmu.Unlock()
+}
+
+func (s *Server) clearDgramHub(sessionID string) {
+	s.dgmu.Lock()
+	if h, ok := s.dgrams[sessionID]; ok {
+		h.Close()
+		delete(s.dgrams, sessionID)
+	}
+	s.dgmu.Unlock()
 }
 
 // Subscribe returns a channel of agent lifecycle events plus an unsubscribe
@@ -216,6 +245,11 @@ func (s *Server) handleSession(ctx context.Context, tsess transport.Session) {
 	logrus.Infof("agent online: %s id=%s key=%s caps=%#x via %s",
 		hello.Name, sess.ID, peerKeyHex[:16], negotiated, tsess.Kind())
 
+	// Start the datagram multiplexer if UDP-over-datagram was negotiated.
+	if ds, ok := tsess.(transport.DatagramSession); ok && wire.Has(negotiated, wire.CapDatagramUDP) {
+		s.setDgramHub(sess.ID, newDgramHub(ds))
+	}
+
 	if s.cfg.OnConnect != nil {
 		s.cfg.OnConnect(sess)
 	}
@@ -232,6 +266,7 @@ func (s *Server) handleSession(ctx context.Context, tsess transport.Session) {
 		if !sess.IsCurrentTransport(tsess) {
 			return
 		}
+		s.clearDgramHub(sess.ID)
 		sess.MarkOffline()
 		if s.cfg.OnDisconnect != nil {
 			s.cfg.OnDisconnect(sess)
@@ -372,6 +407,43 @@ func (s *Server) HostPing(ctx context.Context, sess *session.Session, address st
 		return false, errors.New("unexpected host ping response")
 	}
 	return resp.Alive, nil
+}
+
+// OpenDatagramFlow sets up a UDP flow carried over the transport's datagram
+// channel. It opens a setup stream, asks the agent to dial the target in
+// datagram mode, and on success returns the setup stream (kept open as the
+// teardown signal) and a flowConn carrying the flow.
+func (s *Server) OpenDatagramFlow(ctx context.Context, sess *session.Session, hub *dgramHub, req wire.ConnectRequest) (transport.Stream, *flowConn, bool, error) {
+	t := sess.Transport()
+	if t == nil || t.IsClosed() {
+		return nil, nil, false, errors.New("session is offline")
+	}
+	stream, err := t.Open(ctx)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	flowID := uint32(sess.NextConnID())
+	req.Datagram = true
+	req.FlowID = flowID
+	codec := wire.NewCodec(stream)
+	if err := codec.Encode(req); err != nil {
+		stream.Close()
+		return nil, nil, false, err
+	}
+	if err := codec.Decode(); err != nil {
+		stream.Close()
+		return nil, nil, false, err
+	}
+	resp, ok := codec.Payload.(*wire.ConnectResponse)
+	if !ok {
+		stream.Close()
+		return nil, nil, false, errors.New("unexpected connect response")
+	}
+	if !resp.Established {
+		stream.Close()
+		return nil, nil, resp.Reset, ErrConnectFailed
+	}
+	return stream, hub.open(flowID), false, nil
 }
 
 // KillAgent asks the agent to terminate. The agent exits on receipt, so no

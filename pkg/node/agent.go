@@ -58,8 +58,9 @@ type Agent struct {
 	sessionID   atomic.Value // string
 	resumeToken atomic.Value // string
 
-	connTrack sync.Map // int32 -> net.Conn (reverse-listener inbound sockets)
-	listeners sync.Map // int32 -> io.Closer (active reverse listeners)
+	connTrack sync.Map     // int32 -> net.Conn (reverse-listener inbound sockets)
+	listeners sync.Map     // int32 -> io.Closer (active reverse listeners)
+	dgram     atomic.Value // *dgramHub for the current connection (may be nil)
 	lisSeq    atomic.Int32
 	connSeq   atomic.Int32
 }
@@ -123,6 +124,14 @@ func (a *Agent) Serve(ctx context.Context, dialer transport.Dialer) error {
 	a.sessionID.Store(hr.SessionID)
 	a.resumeToken.Store(hr.ResumeToken)
 	logrus.Infof("session established id=%s caps=%#x", hr.SessionID, hr.AcceptedCaps)
+
+	// If UDP-over-datagram was negotiated, start the datagram multiplexer for
+	// this connection.
+	if ds, ok := sess.(transport.DatagramSession); ok && wire.Has(hr.AcceptedCaps, wire.CapDatagramUDP) {
+		hub := newDgramHub(ds)
+		a.dgram.Store(hub)
+		defer func() { hub.Close(); a.dgram.Store((*dgramHub)(nil)) }()
+	}
 
 	// 3. Serve the control stream (heartbeat / kill) in the background.
 	ctrlErr := make(chan error, 1)
@@ -252,9 +261,20 @@ func (a *Agent) handleConnect(stream transport.Stream, codec *wire.Codec, req *w
 		}
 		return
 	}
-	if resp.Established {
-		relay.StartRelay(target, stream)
+	if !resp.Established {
+		return
 	}
+
+	// Datagram UDP flow: relay the dialed socket over the datagram channel keyed
+	// by FlowID; the setup stream stays open as the teardown signal.
+	if req.Datagram && req.Transport == wire.TransportUDP {
+		hub, _ := a.dgram.Load().(*dgramHub)
+		if hub != nil {
+			bindDatagramFlow(stream, target, hub.open(req.FlowID))
+			return
+		}
+	}
+	relay.StartRelay(target, stream)
 }
 
 func (a *Agent) handleHostPing(codec *wire.Codec, req *wire.HostPingRequest) {

@@ -139,11 +139,18 @@ type AgentKillRequest struct{}
 
 // ConnectRequest asks the agent to dial a target on its network. The server
 // opens one stream per flow and prefixes it with this message.
+//
+// When Datagram is set (UDP only, negotiated via CapDatagramUDP), the flow is
+// carried over the transport's unreliable datagram channel keyed by FlowID
+// instead of this stream; the stream is used only to set up and tear down the
+// flow.
 type ConnectRequest struct {
 	Net       uint8
 	Transport uint8
 	Address   string
 	Port      uint16
+	Datagram  bool
+	FlowID    uint32
 }
 
 // ConnectResponse reports whether the dial succeeded. Reset asks the userland

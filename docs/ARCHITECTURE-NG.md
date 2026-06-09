@@ -137,6 +137,21 @@ flaky agent keeps its identity and operator-visible state across reconnects.
 5. For each flow the gVisor stack intercepts, the server opens a **data stream**,
    sends a `ConnectRequest`, and on success relays it to the userland endpoint.
    Reverse listeners and ICMP host-ping work the same way over their own streams.
+6. When UDP-over-datagram is negotiated (QUIC only), UDP flows take a fast path:
+   the server sets up the flow on a short-lived stream (`ConnectRequest.Datagram`
+   + `FlowID`) and then carries packets over the connection's **datagram channel**
+   keyed by `FlowID` (`pkg/node/dgram.go`), avoiding per-flow streams and stream
+   head-of-line blocking. The setup stream stays open purely as a teardown
+   signal. Datagrams larger than the QUIC MTU fall back to being dropped, matching
+   UDP semantics; typical UDP (DNS, etc.) fits.
+
+## Interactive console
+
+`ng-proxy -console` drops into a small operator console driving `node.Server`
+and the gVisor tunnel directly: `agents`, `use <id>`, `start`/`stop` (route the
+selected agent through the TUN), `listener <net> <bind> <to>`, `listeners`,
+`stop-listener <id>`, and `kill <id>`. This gives the legacy CLI's core UX on the
+v2 stack. Without `-console` the proxy auto-routes the first agent (daemon-style).
 
 ## Security note on transport TLS
 
@@ -189,12 +204,18 @@ Coverage of the integration tests:
 Implemented and tested end to end: the three-plane core, all three transports
 (QUIC default + TLS+mux and WebSocket fallbacks), Noise IKpsk2 auth, the
 versioned control protocol with capability negotiation, reverse TCP/UDP
-listeners, session resumption with a disconnect grace window, and the mTLS
-multi-operator hub with a CLI.
+listeners, session resumption with a disconnect grace window, the mTLS
+multi-operator hub with a CLI, **UDP-over-QUIC datagrams wired into the UDP
+forwarder**, and an **interactive operator console** for the proxy.
 
-Remaining (does not block use): UDP flows from the gVisor forwarder still ride
-reliable streams — the QUIC datagram path (`CapDatagramUDP`) is negotiated and
-available at the transport layer but not yet wired into the UDP forwarder;
-per-agent multi-tunnel routing (the proxy currently routes one active agent
-through the TUN); and migrating the legacy CLI / web UI / daemon off the v1
-stack to drive `node.Server` directly.
+On the legacy front end: the v1 grumble CLI / web UI / daemon
+(`cmd/proxy`, `web/`, `pkg/controller`) are intentionally left intact. They are
+tightly bound to `*yamux.Session` through `controller.LigoloAgent` across ~2000
+lines, so rather than retrofit them, the v2 stack ships its own operator
+surfaces — the `ng-proxy -console` and the `ng-operator` mTLS client — which
+together provide the legacy CLI's core UX on `node.Server`. Fully porting the
+web UI / daemon onto `node.Server` (or deleting the v1 path once parity is
+confirmed) remains the last migration step.
+
+Remaining: per-agent multi-tunnel routing (the proxy routes one active agent
+through the TUN at a time), and retiring the v1 controller/yamux path.

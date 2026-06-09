@@ -53,6 +53,7 @@ func main() {
 	pskStr := flag.String("psk", "", "optional pre-shared key (IKpsk2)")
 	operatorListen := flag.String("operator-listen", "", "operator hub mTLS listen addr (host:port); empty disables the hub")
 	operatorDir := flag.String("operator-config", "ligolo-operator", "directory to write the operator config bundle")
+	console := flag.Bool("console", false, "run an interactive console instead of auto-routing the first agent")
 	verbose := flag.Bool("v", false, "verbose logging")
 	flag.Parse()
 
@@ -96,7 +97,9 @@ func main() {
 		Version:  "ng",
 		OnConnect: func(s *session.Session) {
 			logrus.Infof("operator view: agent %q (%s) is now available", s.Name, s.ID)
-			tun.attach(s)
+			if !*console {
+				tun.attach(s) // non-console: auto-route the first agent
+			}
 		},
 		OnDisconnect: func(s *session.Session) {
 			logrus.Infof("operator view: agent %q (%s) disconnected", s.Name, s.ID)
@@ -110,9 +113,18 @@ func main() {
 	}
 
 	logrus.Infof("assign the tunnel an address and route, e.g.: sudo ip addr add 240.0.0.1/4 dev %s && sudo ip link set %s up", *tunName, *tunName)
-	if err := srv.Serve(ctx, ln); err != nil {
-		logrus.Fatalf("serve: %v", err)
+
+	go func() {
+		if err := srv.Serve(ctx, ln); err != nil && ctx.Err() == nil {
+			logrus.Fatalf("serve: %v", err)
+		}
+	}()
+
+	if *console {
+		runConsole(srv, tun)
+		return
 	}
+	select {} // block forever; agents auto-route via OnConnect
 }
 
 // startOperatorHub provisions an operator PKI, writes an operator config bundle
@@ -199,6 +211,54 @@ func (t *tunnel) detach(s *session.Session) {
 		}
 		t.active = nil
 	}
+}
+
+// switchTo routes a specific agent through the TUN, replacing any current one.
+// Used by the interactive console.
+func (t *tunnel) switchTo(s *session.Session) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.active == s {
+		return nil
+	}
+	if t.pool != nil {
+		t.pool.Close()
+		t.pool = nil
+	}
+	if t.stack == nil {
+		ns, err := netstack.NewStack(netstack.StackSettings{TunName: t.tunName, MaxInflight: 4096}, nil)
+		if err != nil {
+			return err
+		}
+		t.stack = ns
+	}
+	pool := netstack.NewConnPool(4096)
+	t.pool = &pool
+	t.stack.SetConnPool(&pool)
+	t.active = s
+	go t.run(s, &pool)
+	return nil
+}
+
+// stop detaches whatever agent is currently routed.
+func (t *tunnel) stop() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.pool != nil {
+		t.pool.Close()
+		t.pool = nil
+	}
+	t.active = nil
+}
+
+// activeID returns the routed agent's id, or "" if none.
+func (t *tunnel) activeID() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.active == nil {
+		return ""
+	}
+	return t.active.ID
 }
 
 func loadOrGenerateIdentity(keyHex string) auth.Identity {
