@@ -40,8 +40,9 @@ multiplexer so the data plane can run over different transports:
 
 | Implementation | Package | Notes |
 |---|---|---|
-| **QUIC (default)** | `pkg/transport/quictransport` | UDP based, per-stream loss recovery (no cross-stream HoL blocking), built-in stream multiplexing, large auto-growing windows, transport keepalive. |
+| **QUIC (default)** | `pkg/transport/quictransport` | UDP based, per-stream loss recovery (no cross-stream HoL blocking), built-in stream multiplexing, large auto-growing windows, transport keepalive, and unreliable **datagrams** (`transport.DatagramSession`) for UDP. |
 | **TLS+yamux (fallback)** | `pkg/transport/muxtransport` | For environments where UDP is blocked. Carries the TCP-over-TCP limitations and is only chosen when QUIC is unavailable. |
+| **WebSocket (fallback)** | `pkg/transport/wstransport` | yamux over a WebSocket (`ws://`/`wss://`) for CDN / HTTP-proxy traversal; traffic looks like ordinary HTTP(S). Selected last. |
 
 `Stream` satisfies `net.Conn`, so streams are handed straight to the existing
 `pkg/relay` and to gVisor's `gonet` adapters with no glue.
@@ -91,19 +92,41 @@ Mutual authentication uses the Noise framework's **IKpsk2** pattern
   the control stream, so control traffic is confidential even over an untrusted
   transport.
 
-### Operator plane / multi-operator — `pkg/session`
+### Operator plane / multi-operator — `pkg/session` + `pkg/operator`
 
 All per-agent state lives on a `session.Session` value (conntrack tables,
 atomic id counters, capabilities, the bound transport) rather than in globals.
 Ids and resume tokens come from `crypto/rand`. The server's `session.Registry`
 is the single source of truth for connected agents and is safe for concurrent
-reads by multiple operators — the foundation for a Sliver-style multi-operator
-hub. Resuming validates the session id against its secret resume token before
-rebinding the transport.
+reads by multiple operators.
+
+`pkg/operator` is the Sliver-style multiplayer hub. It serves a typed RPC
+surface (list agents, add/stop reverse listeners, kill agent, and a live event
+stream of agent connect/resume/disconnect) over a **mutual-TLS** listener: each
+operator authenticates with a client certificate and is identified by its
+certificate common name. `ng-proxy -operator-listen` provisions an operator PKI,
+writes a self-contained operator config bundle (`new-operator` flow), and serves
+the hub; `ng-operator` is the operator CLI.
+
+> Implementation note: the operator RPC uses the project's length-prefixed
+> framing (msgpack) rather than gRPC/protobuf, because the build environment has
+> no `protoc`. The message set in `pkg/operator/api.go` is the service contract
+> and maps directly onto a `.proto` if gRPC codegen is desired.
+
+### Session resumption and the disconnect grace window
+
+When an agent's transport drops, the server does **not** immediately discard the
+session: it marks it offline and retains it for a grace window
+(`ServerConfig.ResumeGrace`, default 5 min), reaped by a background loop. On
+reconnect the agent re-presents its session id + resume token; the server
+validates the token, rebinds the new transport to the existing session, and
+emits a `resume` event. This complements QUIC connection migration and means a
+flaky agent keeps its identity and operator-visible state across reconnects.
 
 ## End-to-end flow
 
-1. Agent dials the server over the chosen transport (`quic://` or `tls://`).
+1. Agent dials the server over the chosen transport (`quic://`, `tls://`,
+   `ws://` or `wss://`).
 2. Agent opens the **control stream** and runs the Noise IKpsk2 handshake
    (initiator). The server authorizes the agent by its authenticated static key.
 3. Agent sends `HelloRequest` (version, capabilities, interfaces, optional
@@ -123,22 +146,55 @@ is the real authentication and is independent of any certificate or host trust
 store. This defeats enterprise TLS-inspection proxies and removes all PKI
 management.
 
+## Running it
+
+```sh
+# Server: QUIC data plane + operator hub. Prints the static public key to pin.
+go run ./cmd/ng-proxy -listen quic://0.0.0.0:11601 -operator-listen 127.0.0.1:11602
+
+# Agent: pin the server key printed above (transport can be quic/tls/ws/wss).
+go run ./cmd/ng-agent -connect quic://server:11601 -server-key <hex>
+
+# Operator: uses the bundle ng-proxy wrote to ./ligolo-operator/.
+go run ./cmd/ng-operator -connect 127.0.0.1:11602 -config ./ligolo-operator list
+go run ./cmd/ng-operator -connect 127.0.0.1:11602 -config ./ligolo-operator \
+    listener <agentID> tcp 0.0.0.0:8080 127.0.0.1:80
+go run ./cmd/ng-operator -connect 127.0.0.1:11602 -config ./ligolo-operator watch
+```
+
 ## Build & test
 
 ```sh
 go build ./...
-go test ./pkg/wire/... ./pkg/auth/... ./pkg/session/... ./pkg/node/...
+go test -race ./pkg/wire/... ./pkg/auth/... ./pkg/session/... \
+    ./pkg/node/... ./pkg/operator/... ./pkg/transport/...
 ```
 
-The `pkg/node` integration tests stand up a real QUIC (and TLS+mux) server and
-agent, run the full handshake + capability negotiation, and relay a connection
-end to end to a local echo target. `TestRejectWrongServerKey` proves an agent
-that pins the wrong server key is rejected by the Noise handshake.
+Coverage of the integration tests:
+
+* `pkg/node` stands up real QUIC, TLS+mux and WebSocket servers + agents, runs
+  the full Noise handshake + capability negotiation, and relays connections end
+  to end to an echo target; it also covers reverse listeners (incl. close) and
+  session resumption (drop + reconnect keeps the same session id).
+* `pkg/operator` runs the mTLS hub with a connected agent and exercises
+  list/add-listener/event-stream, plus rejection of an operator with no client
+  certificate.
+* `pkg/transport/quictransport` proves QUIC datagrams flow over the
+  `DatagramSession` interface.
+* `TestRejectWrongServerKey` proves an agent that pins the wrong server key is
+  rejected by the Noise handshake.
 
 ## Status / scope
 
-This is the core architecture, wired and tested. It does not yet replace the
-legacy CLI / web UI / daemon / autoroute, which continue to use the v1 stack.
-Follow-on work: a gRPC+mTLS operator API on top of `session.Registry`,
-per-agent multi-tunnel routing, UDP-over-QUIC datagrams (`CapDatagramUDP`), and
-a WebSocket/HTTPS fallback transport for CDN traversal.
+Implemented and tested end to end: the three-plane core, all three transports
+(QUIC default + TLS+mux and WebSocket fallbacks), Noise IKpsk2 auth, the
+versioned control protocol with capability negotiation, reverse TCP/UDP
+listeners, session resumption with a disconnect grace window, and the mTLS
+multi-operator hub with a CLI.
+
+Remaining (does not block use): UDP flows from the gVisor forwarder still ride
+reliable streams — the QUIC datagram path (`CapDatagramUDP`) is negotiated and
+available at the transport layer but not yet wired into the UDP forwarder;
+per-agent multi-tunnel routing (the proxy currently routes one active agent
+through the TUN); and migrating the legacy CLI / web UI / daemon off the v1
+stack to drive `node.Server` directly.

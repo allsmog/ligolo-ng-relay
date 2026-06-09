@@ -64,12 +64,14 @@ type Session struct {
 
 	CreatedAt time.Time
 
-	mu        sync.RWMutex
-	tport     transport.Session
-	lastSeen  time.Time
-	connSeq   atomic.Uint64
-	lisSeq    atomic.Uint32
-	listeners map[int32]*Listener
+	mu           sync.RWMutex
+	tport        transport.Session
+	lastSeen     time.Time
+	online       bool
+	offlineSince time.Time
+	connSeq      atomic.Uint64
+	lisSeq       atomic.Uint32
+	listeners    map[int32]*Listener
 }
 
 // Listener tracks a reverse listener owned by a session.
@@ -88,6 +90,7 @@ func newSession(peerKeyHex string) *Session {
 		PeerKeyHex:  peerKeyHex,
 		CreatedAt:   now,
 		lastSeen:    now,
+		online:      true,
 		listeners:   make(map[int32]*Listener),
 	}
 }
@@ -99,12 +102,47 @@ func (s *Session) Transport() transport.Session {
 	return s.tport
 }
 
-// Rebind swaps in a new transport session (used on resume).
+// Rebind swaps in a new transport session and marks the session online (used on
+// resume).
 func (s *Session) Rebind(t transport.Session) {
 	s.mu.Lock()
 	s.tport = t
 	s.lastSeen = time.Now()
+	s.online = true
+	s.offlineSince = time.Time{}
 	s.mu.Unlock()
+}
+
+// IsCurrentTransport reports whether t is the session's currently-bound
+// transport. The previous connection's goroutine uses this to avoid marking a
+// freshly-resumed session offline.
+func (s *Session) IsCurrentTransport(t transport.Session) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.tport == t
+}
+
+// MarkOffline records that the session lost its transport. The session is
+// retained for a grace period so the agent can resume it.
+func (s *Session) MarkOffline() {
+	s.mu.Lock()
+	s.online = false
+	s.offlineSince = time.Now()
+	s.mu.Unlock()
+}
+
+// Online reports whether the session currently has a live transport.
+func (s *Session) Online() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.online
+}
+
+// OfflineSince returns when the session went offline (zero if online).
+func (s *Session) OfflineSince() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.offlineSince
 }
 
 // Touch records liveness.
@@ -210,6 +248,24 @@ func (r *Registry) Remove(id string) {
 		delete(r.byToken, s.ResumeToken)
 		delete(r.byID, id)
 	}
+}
+
+// Reap removes sessions that have been offline longer than grace and returns
+// them so the caller can release any associated resources. This is what bounds
+// the resume window.
+func (r *Registry) Reap(grace time.Duration) []*Session {
+	now := time.Now()
+	var reaped []*Session
+	r.mu.Lock()
+	for id, s := range r.byID {
+		if !s.Online() && now.Sub(s.OfflineSince()) > grace {
+			delete(r.byToken, s.ResumeToken)
+			delete(r.byID, id)
+			reaped = append(reaped, s)
+		}
+	}
+	r.mu.Unlock()
+	return reaped
 }
 
 // List returns a snapshot of all sessions.

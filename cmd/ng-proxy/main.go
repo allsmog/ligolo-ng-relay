@@ -35,20 +35,24 @@ import (
 
 	"github.com/nicocha30/ligolo-ng/pkg/auth"
 	"github.com/nicocha30/ligolo-ng/pkg/node"
+	"github.com/nicocha30/ligolo-ng/pkg/operator"
 	"github.com/nicocha30/ligolo-ng/pkg/proxy/netstack"
 	"github.com/nicocha30/ligolo-ng/pkg/session"
 	"github.com/nicocha30/ligolo-ng/pkg/tlsutils"
 	"github.com/nicocha30/ligolo-ng/pkg/transport"
 	"github.com/nicocha30/ligolo-ng/pkg/transport/muxtransport"
 	"github.com/nicocha30/ligolo-ng/pkg/transport/quictransport"
+	"github.com/nicocha30/ligolo-ng/pkg/transport/wstransport"
 	"github.com/sirupsen/logrus"
 )
 
 func main() {
-	listenAddr := flag.String("listen", "quic://0.0.0.0:11601", "listen URL: quic://host:port or tls://host:port")
+	listenAddr := flag.String("listen", "quic://0.0.0.0:11601", "listen URL: quic://, tls://, ws:// or wss://host:port")
 	tunName := flag.String("tun", "ligolo", "TUN interface name for the userland network stack")
 	keyHex := flag.String("key", "", "server static private key (hex); generated if empty")
 	pskStr := flag.String("psk", "", "optional pre-shared key (IKpsk2)")
+	operatorListen := flag.String("operator-listen", "", "operator hub mTLS listen addr (host:port); empty disables the hub")
+	operatorDir := flag.String("operator-config", "ligolo-operator", "directory to write the operator config bundle")
 	verbose := flag.Bool("v", false, "verbose logging")
 	flag.Parse()
 
@@ -71,14 +75,19 @@ func main() {
 		ln, err = quictransport.Listen(host, tlsConfig)
 	case "tls":
 		ln, err = muxtransport.Listen(host, tlsConfig)
+	case "ws":
+		ln, err = wstransport.Listen(host, nil)
+	case "wss":
+		ln, err = wstransport.Listen(host, tlsConfig)
 	default:
-		logrus.Fatalf("unknown transport scheme %q (use quic:// or tls://)", scheme)
+		logrus.Fatalf("unknown transport scheme %q (use quic://, tls://, ws:// or wss://)", scheme)
 	}
 	if err != nil {
 		logrus.Fatalf("listen: %v", err)
 	}
 	defer ln.Close()
 
+	ctx := context.Background()
 	tun := &tunnel{tunName: *tunName}
 
 	srv := node.NewServer(node.ServerConfig{
@@ -96,10 +105,41 @@ func main() {
 	})
 	tun.srv = srv
 
+	if *operatorListen != "" {
+		startOperatorHub(ctx, srv, *operatorListen, *operatorDir)
+	}
+
 	logrus.Infof("assign the tunnel an address and route, e.g.: sudo ip addr add 240.0.0.1/4 dev %s && sudo ip link set %s up", *tunName, *tunName)
-	if err := srv.Serve(context.Background(), ln); err != nil {
+	if err := srv.Serve(ctx, ln); err != nil {
 		logrus.Fatalf("serve: %v", err)
 	}
+}
+
+// startOperatorHub provisions an operator PKI, writes an operator config bundle
+// and serves the multi-operator hub over mutual TLS.
+func startOperatorHub(ctx context.Context, srv *node.Server, addr, configDir string) {
+	ca, err := operator.NewCA()
+	if err != nil {
+		logrus.Fatalf("operator CA: %v", err)
+	}
+	serverCert, err := ca.IssueServer(operator.ServerName())
+	if err != nil {
+		logrus.Fatalf("operator server cert: %v", err)
+	}
+	if err := operator.WriteOperatorBundle(ca, configDir, "admin"); err != nil {
+		logrus.Fatalf("write operator bundle: %v", err)
+	}
+	hubLn, err := tls.Listen("tcp", addr, ca.HubTLSConfig(serverCert))
+	if err != nil {
+		logrus.Fatalf("operator listen: %v", err)
+	}
+	hub := operator.NewHub(srv)
+	go func() {
+		if err := hub.Serve(ctx, hubLn); err != nil && ctx.Err() == nil {
+			logrus.Errorf("operator hub: %v", err)
+		}
+	}()
+	logrus.Infof("operator hub listening on %s; operator bundle written to %s/", addr, configDir)
 }
 
 // tunnel lazily creates one gVisor stack bound to the TUN device and routes the

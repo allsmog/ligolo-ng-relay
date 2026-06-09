@@ -31,11 +31,12 @@ import (
 	"github.com/nicocha30/ligolo-ng/pkg/transport"
 	"github.com/nicocha30/ligolo-ng/pkg/transport/muxtransport"
 	"github.com/nicocha30/ligolo-ng/pkg/transport/quictransport"
+	"github.com/nicocha30/ligolo-ng/pkg/transport/wstransport"
 	"github.com/sirupsen/logrus"
 )
 
 func main() {
-	connectAddr := flag.String("connect", "quic://127.0.0.1:11601", "server URL: quic://host:port or tls://host:port")
+	connectAddr := flag.String("connect", "quic://127.0.0.1:11601", "server URL: quic://, tls://, ws:// or wss://host:port")
 	serverKeyHex := flag.String("server-key", "", "pinned server static public key (hex), required")
 	pskStr := flag.String("psk", "", "optional pre-shared key (IKpsk2), must match the server")
 	keyHex := flag.String("key", "", "agent static private key (hex); generated if empty")
@@ -66,13 +67,20 @@ func main() {
 	tlsConfig := &tls.Config{InsecureSkipVerify: true}
 
 	var dialer transport.Dialer
+	serverAddr := host // quic/tls take host:port
 	switch scheme {
 	case "quic":
 		dialer = quictransport.NewDialer(tlsConfig)
 	case "tls":
 		dialer = muxtransport.NewDialer(tlsConfig)
+	case "ws":
+		dialer = wstransport.NewDialer(nil)
+		serverAddr = *connectAddr // websocket dial needs the full URL
+	case "wss":
+		dialer = wstransport.NewDialer(tlsConfig)
+		serverAddr = *connectAddr
 	default:
-		logrus.Fatalf("unknown transport scheme %q (use quic:// or tls://)", scheme)
+		logrus.Fatalf("unknown transport scheme %q (use quic://, tls://, ws:// or wss://)", scheme)
 	}
 
 	agent := node.NewAgent(node.AgentConfig{
@@ -80,7 +88,7 @@ func main() {
 		ServerKey:  serverKey,
 		PSK:        []byte(*pskStr),
 		Version:    "ng",
-		ServerAddr: host,
+		ServerAddr: serverAddr,
 	})
 
 	ctx := context.Background()

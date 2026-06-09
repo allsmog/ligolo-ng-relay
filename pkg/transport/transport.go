@@ -57,6 +57,17 @@ type Session interface {
 	Kind() Kind
 }
 
+// DatagramSession is an optional capability a Session may implement when the
+// underlying transport supports unreliable datagrams (QUIC). It lets UDP flows
+// be carried as datagrams instead of reliable streams, avoiding head-of-line
+// blocking and per-flow stream overhead. Callers must multiplex their own flow
+// identifier into the payload, since datagrams are connection-scoped.
+type DatagramSession interface {
+	Session
+	SendDatagram(b []byte) error
+	ReceiveDatagram(ctx context.Context) ([]byte, error)
+}
+
 // Listener accepts inbound Sessions (server side).
 type Listener interface {
 	Accept(ctx context.Context) (Session, error)
@@ -83,6 +94,8 @@ const (
 	// KindTLSMux is the firewall-traversal fallback: TLS 1.3 over TCP with a
 	// userland yamux multiplexer.
 	KindTLSMux
+	// KindWebsocket carries yamux over a WebSocket, for CDN/HTTP-proxy traversal.
+	KindWebsocket
 )
 
 func (k Kind) String() string {
@@ -91,6 +104,8 @@ func (k Kind) String() string {
 		return "quic"
 	case KindTLSMux:
 		return "tls+mux"
+	case KindWebsocket:
+		return "websocket"
 	default:
 		return "unknown"
 	}

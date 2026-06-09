@@ -102,6 +102,17 @@ func (s *session) RemoteAddr() net.Addr { return s.conn.RemoteAddr() }
 func (s *session) LocalAddr() net.Addr  { return s.conn.LocalAddr() }
 func (s *session) Kind() transport.Kind { return transport.KindQUIC }
 
+// SendDatagram / ReceiveDatagram implement transport.DatagramSession. Datagrams
+// are enabled in defaultConfig; UDP flows can ride these instead of streams.
+func (s *session) SendDatagram(b []byte) error { return s.conn.SendDatagram(b) }
+
+func (s *session) ReceiveDatagram(ctx context.Context) ([]byte, error) {
+	return s.conn.ReceiveDatagram(ctx)
+}
+
+// Ensure the QUIC session advertises datagram support.
+var _ transport.DatagramSession = (*session)(nil)
+
 // Dialer dials QUIC sessions (used by the agent).
 type Dialer struct {
 	TLSConfig *tls.Config

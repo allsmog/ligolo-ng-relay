@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/user"
@@ -58,6 +59,7 @@ type Agent struct {
 	resumeToken atomic.Value // string
 
 	connTrack sync.Map // int32 -> net.Conn (reverse-listener inbound sockets)
+	listeners sync.Map // int32 -> io.Closer (active reverse listeners)
 	lisSeq    atomic.Int32
 	connSeq   atomic.Int32
 }
@@ -70,9 +72,15 @@ func NewAgent(cfg AgentConfig) *Agent {
 	return a
 }
 
-func (a *Agent) caps() uint32 {
-	return uint32(wire.CapTCP | wire.CapUDP | wire.CapICMP |
+func (a *Agent) caps(sess transport.Session) uint32 {
+	caps := uint32(wire.CapTCP | wire.CapUDP | wire.CapICMP |
 		wire.CapReverseListener | wire.CapResume | wire.CapHeartbeat)
+	// Advertise UDP-over-datagram only when the negotiated transport supports
+	// unreliable datagrams (QUIC).
+	if _, ok := sess.(transport.DatagramSession); ok {
+		caps |= uint32(wire.CapDatagramUDP)
+	}
+	return caps
 }
 
 // Serve dials the server using the given dialer and runs the agent until ctx is
@@ -99,7 +107,7 @@ func (a *Agent) Serve(ctx context.Context, dialer transport.Dialer) error {
 	ctrl := wire.NewCodec(secure)
 
 	// 2. Hello / capability negotiation.
-	if err := ctrl.Encode(a.buildHello()); err != nil {
+	if err := ctrl.Encode(a.buildHello(sess)); err != nil {
 		return fmt.Errorf("send hello: %w", err)
 	}
 	if err := ctrl.Decode(); err != nil {
@@ -137,7 +145,7 @@ func (a *Agent) Serve(ctx context.Context, dialer transport.Dialer) error {
 	}
 }
 
-func (a *Agent) buildHello() wire.HelloRequest {
+func (a *Agent) buildHello(sess transport.Session) wire.HelloRequest {
 	var username, hostname string
 	if h, err := os.Hostname(); err == nil {
 		hostname = h
@@ -155,7 +163,7 @@ func (a *Agent) buildHello() wire.HelloRequest {
 		Name:            fmt.Sprintf("%s@%s", username, hostname),
 		SessionID:       a.sessionID.Load().(string),
 		ResumeToken:     a.resumeToken.Load().(string),
-		Capabilities:    a.caps(),
+		Capabilities:    a.caps(sess),
 		Interfaces:      collectInterfaces(),
 	}
 }
@@ -200,6 +208,10 @@ func (a *Agent) handleStream(stream transport.Stream) {
 		a.handleListenerSock(stream, codec, msg)
 	case *wire.ListenerCloseRequest:
 		a.handleListenerClose(codec, msg)
+	case *wire.AgentKillRequest:
+		logrus.Info("received kill request, exiting")
+		stream.Close()
+		os.Exit(0)
 	default:
 		logrus.Warnf("unexpected data-plane message %T", codec.Payload)
 		stream.Close()
@@ -266,6 +278,8 @@ func (a *Agent) handleListener(stream transport.Stream, codec *wire.Codec, req *
 			udpConn.Close()
 			return
 		}
+		a.listeners.Store(id, udpConn)
+		defer a.listeners.Delete(id)
 		// UDP listeners relay datagrams directly over this stream.
 		relay.StartPacketRelay(stream, udpConn)
 		udpConn.Close()
@@ -278,6 +292,8 @@ func (a *Agent) handleListener(stream transport.Stream, codec *wire.Codec, req *
 		return
 	}
 	defer ln.Close()
+	a.listeners.Store(id, ln)
+	defer a.listeners.Delete(id)
 	if err := codec.Encode(wire.ListenerResponse{ListenerID: id}); err != nil {
 		return
 	}
@@ -324,9 +340,16 @@ func (a *Agent) handleListenerSock(stream transport.Stream, codec *wire.Codec, r
 }
 
 func (a *Agent) handleListenerClose(codec *wire.Codec, req *wire.ListenerCloseRequest) {
-	// Listeners are closed when their goroutine's stream is torn down; this
-	// message simply acknowledges. A production build would index listeners by
-	// id and close the matching net.Listener here.
+	v, ok := a.listeners.LoadAndDelete(req.ListenerID)
+	if !ok {
+		_ = codec.Encode(wire.ListenerCloseResponse{Err: true, ErrString: "invalid listener id"})
+		return
+	}
+	// Closing the listener unblocks its Accept loop, which tears down its stream.
+	if err := v.(io.Closer).Close(); err != nil {
+		_ = codec.Encode(wire.ListenerCloseResponse{Err: true, ErrString: err.Error()})
+		return
+	}
 	_ = codec.Encode(wire.ListenerCloseResponse{})
 }
 

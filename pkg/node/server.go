@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/nicocha30/ligolo-ng/pkg/auth"
@@ -36,6 +37,7 @@ type ServerConfig struct {
 	Version           string
 	HeartbeatInterval time.Duration // 0 -> default 30s
 	LivenessTimeout   time.Duration // 0 -> default 90s
+	ResumeGrace       time.Duration // how long an offline session is retained for resume; 0 -> default 5m
 
 	// Authorize, if set, gates an agent by its authenticated static public key
 	// (hex). Returning false rejects the agent. nil means accept any agent that
@@ -47,11 +49,64 @@ type ServerConfig struct {
 	OnDisconnect func(*session.Session)
 }
 
+// EventKind classifies an agent lifecycle event.
+type EventKind string
+
+const (
+	EventConnect    EventKind = "connect"
+	EventResume     EventKind = "resume"
+	EventDisconnect EventKind = "disconnect"
+)
+
+// Event is broadcast to subscribers (e.g. the operator hub) on agent lifecycle
+// transitions.
+type Event struct {
+	Kind    EventKind
+	Session *session.Session
+}
+
 // Server is the refactored Ligolo server. It owns the session Registry, which is
 // the single source of truth shared by all connected operators.
 type Server struct {
 	cfg      ServerConfig
 	Registry *session.Registry
+
+	submu sync.Mutex
+	subs  map[int]chan Event
+	subID int
+}
+
+// Subscribe returns a channel of agent lifecycle events plus an unsubscribe
+// function. Multiple operators can subscribe concurrently.
+func (s *Server) Subscribe() (<-chan Event, func()) {
+	ch := make(chan Event, 64)
+	s.submu.Lock()
+	if s.subs == nil {
+		s.subs = make(map[int]chan Event)
+	}
+	id := s.subID
+	s.subID++
+	s.subs[id] = ch
+	s.submu.Unlock()
+	return ch, func() {
+		s.submu.Lock()
+		if c, ok := s.subs[id]; ok {
+			delete(s.subs, id)
+			close(c)
+		}
+		s.submu.Unlock()
+	}
+}
+
+func (s *Server) broadcast(kind EventKind, sess *session.Session) {
+	s.submu.Lock()
+	for _, ch := range s.subs {
+		select {
+		case ch <- Event{Kind: kind, Session: sess}:
+		default: // drop if a slow subscriber is full
+		}
+	}
+	s.submu.Unlock()
 }
 
 // NewServer builds a Server.
@@ -62,12 +117,16 @@ func NewServer(cfg ServerConfig) *Server {
 	if cfg.LivenessTimeout == 0 {
 		cfg.LivenessTimeout = 90 * time.Second
 	}
+	if cfg.ResumeGrace == 0 {
+		cfg.ResumeGrace = 5 * time.Minute
+	}
 	return &Server{cfg: cfg, Registry: session.NewRegistry()}
 }
 
 // Serve accepts sessions from the listener until ctx is cancelled.
 func (s *Server) Serve(ctx context.Context, ln transport.Listener) error {
 	logrus.Infof("listening on %s (%s)", ln.Addr(), ln.Kind())
+	go s.reapLoop(ctx)
 	for {
 		sess, err := ln.Accept(ctx)
 		if err != nil {
@@ -118,6 +177,9 @@ func (s *Server) handleSession(ctx context.Context, tsess transport.Session) {
 	// Capability negotiation: operate on the intersection.
 	serverCaps := uint32(wire.CapTCP | wire.CapUDP | wire.CapICMP |
 		wire.CapReverseListener | wire.CapResume | wire.CapHeartbeat)
+	if _, ok := tsess.(transport.DatagramSession); ok {
+		serverCaps |= uint32(wire.CapDatagramUDP)
+	}
 	negotiated := wire.Negotiate(hello.Capabilities, serverCaps)
 
 	var sess *session.Session
@@ -157,15 +219,48 @@ func (s *Server) handleSession(ctx context.Context, tsess transport.Session) {
 	if s.cfg.OnConnect != nil {
 		s.cfg.OnConnect(sess)
 	}
+	if resumed {
+		s.broadcast(EventResume, sess)
+	} else {
+		s.broadcast(EventConnect, sess)
+	}
 	defer func() {
+		tsess.Close()
+		// Only mark offline / notify if this connection is still the session's
+		// bound transport. If the agent already resumed onto a newer connection,
+		// leave that one alone.
+		if !sess.IsCurrentTransport(tsess) {
+			return
+		}
+		sess.MarkOffline()
 		if s.cfg.OnDisconnect != nil {
 			s.cfg.OnDisconnect(sess)
 		}
-		s.Registry.Remove(sess.ID)
-		tsess.Close()
+		s.broadcast(EventDisconnect, sess)
+		logrus.Infof("agent %s offline; retained for resume up to %s", sess.ID, s.cfg.ResumeGrace)
 	}()
 
 	s.runControl(ctx, sess, ctrl)
+}
+
+// reapLoop periodically removes sessions whose resume grace has elapsed.
+func (s *Server) reapLoop(ctx context.Context) {
+	interval := s.cfg.ResumeGrace / 4
+	if interval < time.Second {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for _, dead := range s.Registry.Reap(s.cfg.ResumeGrace) {
+				logrus.Infof("agent %s removed (resume grace elapsed)", dead.ID)
+			}
+		}
+	}
 }
 
 // runControl drives the heartbeat loop on the control stream and detects loss.
@@ -277,6 +372,21 @@ func (s *Server) HostPing(ctx context.Context, sess *session.Session, address st
 		return false, errors.New("unexpected host ping response")
 	}
 	return resp.Alive, nil
+}
+
+// KillAgent asks the agent to terminate. The agent exits on receipt, so no
+// response is expected.
+func (s *Server) KillAgent(ctx context.Context, sess *session.Session) error {
+	t := sess.Transport()
+	if t == nil || t.IsClosed() {
+		return errors.New("session is offline")
+	}
+	stream, err := t.Open(ctx)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+	return wire.NewCodec(stream).Encode(wire.AgentKillRequest{})
 }
 
 // ErrConnectFailed indicates the agent could not reach the target.
