@@ -1,6 +1,6 @@
 module github.com/nicocha30/ligolo-ng
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.5
@@ -9,24 +9,26 @@ require (
 	github.com/hashicorp/yamux v0.1.0
 	github.com/jedib0t/go-pretty/v6 v6.3.5
 	github.com/sirupsen/logrus v1.9.3
-	golang.org/x/crypto v0.48.0
-	golang.org/x/net v0.49.0
+	golang.org/x/crypto v0.51.0
+	golang.org/x/net v0.55.0
 	golang.zx2c4.com/wintun v0.0.0-20211104114900-415007cec224
 	golang.zx2c4.com/wireguard v0.0.0-20220703234212-c31a7b1ab478
 )
 
 require (
 	github.com/coder/websocket v1.8.14
+	github.com/flynn/noise v1.1.0
 	github.com/gin-contrib/cors v1.7.2
 	github.com/gin-contrib/static v1.1.5
 	github.com/gin-gonic/gin v1.10.0
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/uuid v1.4.0
 	github.com/nicocha30/gvisor-ligolo v0.0.0-20230726075806-989fa2c0a413
+	github.com/quic-go/quic-go v0.60.0
 	github.com/shamaton/msgpack/v2 v2.2.3
 	github.com/spf13/viper v1.19.0
 	github.com/vishvananda/netlink v1.1.1-0.20211118161826-650dca95af54
-	golang.org/x/sys v0.41.0
+	golang.org/x/sys v0.45.0
 )
 
 require (
@@ -77,9 +79,9 @@ require (
 	go.uber.org/multierr v1.9.0 // indirect
 	golang.org/x/arch v0.16.0 // indirect
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
-	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/term v0.40.0 // indirect
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/term v0.43.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect

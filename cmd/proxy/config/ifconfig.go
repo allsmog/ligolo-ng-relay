@@ -79,9 +79,9 @@ func (i *InterfaceInfo) GetRouteString() string {
 	var stringBuffer []string
 	for _, route := range i.Routes {
 		if route.Active {
-			stringBuffer = append(stringBuffer, text.Colors{text.FgGreen}.Sprintf(route.Destination))
+			stringBuffer = append(stringBuffer, text.Colors{text.FgGreen}.Sprint(route.Destination))
 		} else {
-			stringBuffer = append(stringBuffer, text.Colors{text.FgYellow}.Sprintf(route.Destination))
+			stringBuffer = append(stringBuffer, text.Colors{text.FgYellow}.Sprint(route.Destination))
 		}
 	}
 	return strings.Join(stringBuffer, ",")
