@@ -148,10 +148,19 @@ flaky agent keeps its identity and operator-visible state across reconnects.
 ## Interactive console
 
 `ng-proxy -console` drops into a small operator console driving `node.Server`
-and the gVisor tunnel directly: `agents`, `use <id>`, `start`/`stop` (route the
-selected agent through the TUN), `listener <net> <bind> <to>`, `listeners`,
-`stop-listener <id>`, and `kill <id>`. This gives the legacy CLI's core UX on the
-v2 stack. Without `-console` the proxy auto-routes the first agent (daemon-style).
+and the tunnel manager directly: `agents`, `use <id>`, `start [ifname]`/`stop`
+(route the selected agent through its own TUN), `tunnels`,
+`listener <net> <bind> <to>`, `listeners`, `stop-listener <id>`, and
+`kill <id>`. This gives the legacy CLI's core UX on the v2 stack. Without
+`-console` the proxy auto-routes every agent on its own interface (daemon-style).
+
+## Multi-tunnel routing
+
+The proxy routes any number of agents simultaneously: `tunnelManager`
+(`cmd/ng-proxy`) gives each routed agent its own gVisor stack bound to its own
+TUN interface (`ligolo`, `ligolo1`, …), with its own connection pool and
+forwarding goroutine. Stopping a tunnel tears down its stack and removes the
+interface; an agent disconnecting tears down its tunnel automatically.
 
 ## Security note on transport TLS
 
@@ -206,7 +215,8 @@ Implemented and tested end to end: the three-plane core, all three transports
 versioned control protocol with capability negotiation, reverse TCP/UDP
 listeners, session resumption with a disconnect grace window, the mTLS
 multi-operator hub with a CLI, **UDP-over-QUIC datagrams wired into the UDP
-forwarder**, and an **interactive operator console** for the proxy.
+forwarder**, an **interactive operator console** for the proxy, and
+**per-agent multi-tunnel routing** (each routed agent on its own TUN).
 
 On the legacy front end: the v1 grumble CLI / web UI / daemon
 (`cmd/proxy`, `web/`, `pkg/controller`) are intentionally left intact. They are
@@ -217,5 +227,9 @@ together provide the legacy CLI's core UX on `node.Server`. Fully porting the
 web UI / daemon onto `node.Server` (or deleting the v1 path once parity is
 confirmed) remains the last migration step.
 
-Remaining: per-agent multi-tunnel routing (the proxy routes one active agent
-through the TUN at a time), and retiring the v1 controller/yamux path.
+Remaining: retiring the v1 controller/yamux path. This is gated on reaching
+feature parity for the pieces the v1 front end still owns and the v2 stack does
+not yet replace — the web UI, daemon mode, route/interface autoconfiguration
+(autoroute) and autobind, and config-file persistence. Until those land on
+`node.Server`, deleting `cmd/proxy` / `web` / `pkg/controller` would regress
+shipped functionality, so the v1 path is kept alongside v2 rather than removed.

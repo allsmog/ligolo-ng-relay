@@ -33,7 +33,7 @@ import (
 // drives node.Server and the gVisor tunnel directly, giving the same core UX as
 // the legacy CLI (select an agent, route it through the TUN, manage reverse
 // listeners) without the v1 yamux-bound code.
-func runConsole(srv *node.Server, tun *tunnel) {
+func runConsole(srv *node.Server, tun *tunnelManager) {
 	c := &console{srv: srv, tun: tun, listeners: map[int32]*node.ReverseListener{}}
 	fmt.Println("ligolo-ng v2 console. type 'help' for commands.")
 	sc := bufio.NewScanner(os.Stdin)
@@ -46,7 +46,7 @@ func runConsole(srv *node.Server, tun *tunnel) {
 
 type console struct {
 	srv       *node.Server
-	tun       *tunnel
+	tun       *tunnelManager
 	selected  *session.Session
 	listeners map[int32]*node.ReverseListener
 }
@@ -71,10 +71,11 @@ func (c *console) dispatch(args []string) {
 	case "use":
 		c.use(args)
 	case "start":
-		c.start()
+		c.start(args)
 	case "stop":
-		c.tun.stop()
-		fmt.Println("tunnel stopped")
+		c.stop()
+	case "tunnels":
+		c.showTunnels()
 	case "listener":
 		c.addListener(args)
 	case "listeners":
@@ -94,8 +95,9 @@ func (c *console) help() {
 	fmt.Println(`commands:
   agents                          list connected agents
   use <id-prefix>                 select an agent
-  start                           route the selected agent through the TUN
-  stop                            stop routing
+  start [ifname]                  route the selected agent through its own TUN
+  stop                            stop routing the selected agent
+  tunnels                         list active tunnels
   listener <tcp|udp> <bind> <to>  open a reverse listener on the selected agent
   listeners                       list reverse listeners
   stop-listener <id>              close a reverse listener
@@ -106,10 +108,13 @@ func (c *console) help() {
 func (c *console) list() {
 	agents := c.srv.Registry.List()
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tNAME\tONLINE\tROUTED")
-	routed := c.tun.activeID()
+	fmt.Fprintln(w, "ID\tNAME\tONLINE\tTUN")
 	for _, a := range agents {
-		fmt.Fprintf(w, "%s\t%s\t%t\t%t\n", a.ID, a.Name, a.Online(), a.ID == routed)
+		ifName := c.tun.ifNameFor(a.ID)
+		if ifName == "" {
+			ifName = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%t\t%s\n", a.ID, a.Name, a.Online(), ifName)
 	}
 	w.Flush()
 }
@@ -137,16 +142,48 @@ func (c *console) use(args []string) {
 	fmt.Printf("selected %s (%s)\n", s.Name, s.ID)
 }
 
-func (c *console) start() {
+func (c *console) start(args []string) {
 	if c.selected == nil {
 		fmt.Println("select an agent first (use <id>)")
 		return
 	}
-	if err := c.tun.switchTo(c.selected); err != nil {
+	ifName := ""
+	if len(args) >= 2 {
+		ifName = args[1]
+	}
+	name, err := c.tun.start(c.selected, ifName)
+	if err != nil {
 		fmt.Printf("start tunnel failed: %v\n", err)
 		return
 	}
-	fmt.Printf("routing %s through %s\n", c.selected.Name, c.tun.tunName)
+	fmt.Printf("routing %s through %s\n", c.selected.Name, name)
+	fmt.Printf("assign it: sudo ip addr add 240.0.0.1/4 dev %s && sudo ip link set %s up\n", name, name)
+}
+
+func (c *console) stop() {
+	if c.selected == nil {
+		fmt.Println("select an agent first (use <id>)")
+		return
+	}
+	if c.tun.stop(c.selected.ID) {
+		fmt.Println("tunnel stopped")
+	} else {
+		fmt.Println("no tunnel for the selected agent")
+	}
+}
+
+func (c *console) showTunnels() {
+	tunnels := c.tun.list()
+	if len(tunnels) == 0 {
+		fmt.Println("no active tunnels")
+		return
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "IFACE\tAGENT\tID")
+	for _, at := range tunnels {
+		fmt.Fprintf(w, "%s\t%s\t%s\n", at.ifName, at.sess.Name, at.sess.ID)
+	}
+	w.Flush()
 }
 
 func (c *console) addListener(args []string) {

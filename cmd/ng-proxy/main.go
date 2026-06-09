@@ -29,6 +29,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"flag"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -89,7 +90,7 @@ func main() {
 	defer ln.Close()
 
 	ctx := context.Background()
-	tun := &tunnel{tunName: *tunName}
+	var tun *tunnelManager
 
 	srv := node.NewServer(node.ServerConfig{
 		Identity: identity,
@@ -98,15 +99,20 @@ func main() {
 		OnConnect: func(s *session.Session) {
 			logrus.Infof("operator view: agent %q (%s) is now available", s.Name, s.ID)
 			if !*console {
-				tun.attach(s) // non-console: auto-route the first agent
+				// Non-console: auto-route each agent on its own interface.
+				if ifName, err := tun.start(s, ""); err != nil {
+					logrus.Errorf("auto-route %s failed (need root + TUN): %v", s.ID, err)
+				} else {
+					logrus.Infof("routing %s through %s", s.ID, ifName)
+				}
 			}
 		},
 		OnDisconnect: func(s *session.Session) {
 			logrus.Infof("operator view: agent %q (%s) disconnected", s.Name, s.ID)
-			tun.detach(s)
+			tun.stop(s.ID)
 		},
 	})
-	tun.srv = srv
+	tun = newTunnelManager(srv, *tunName)
 
 	if *operatorListen != "" {
 		startOperatorHub(ctx, srv, *operatorListen, *operatorDir)
@@ -154,111 +160,117 @@ func startOperatorHub(ctx context.Context, srv *node.Server, addr, configDir str
 	logrus.Infof("operator hub listening on %s; operator bundle written to %s/", addr, configDir)
 }
 
-// tunnel lazily creates one gVisor stack bound to the TUN device and routes the
-// currently active agent's flows through it. This mirrors the legacy single
-// active-tunnel model; a full multi-agent build would create one stack per
-// selected agent.
-type tunnel struct {
-	tunName string
-	srv     *node.Server
-
-	mu     sync.Mutex
+// agentTunnel is one routed agent: its own gVisor stack bound to its own TUN
+// interface, fed by its own connection pool.
+type agentTunnel struct {
+	ifName string
+	sess   *session.Session
 	stack  *netstack.NetStack
 	pool   *netstack.ConnPool
-	active *session.Session
 }
 
-func (t *tunnel) attach(s *session.Session) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.active != nil {
-		logrus.Infof("a tunnel is already active for %s; %s is available but not routed", t.active.ID, s.ID)
-		return
+// tunnelManager routes any number of agents simultaneously, each through a
+// distinct TUN interface and gVisor stack. This replaces the earlier single
+// active-tunnel model and matches the legacy "one interface per tunnel" design.
+type tunnelManager struct {
+	srv         *node.Server
+	defaultName string
+
+	mu      sync.Mutex
+	tunnels map[string]*agentTunnel // sessionID -> tunnel
+}
+
+func newTunnelManager(srv *node.Server, defaultName string) *tunnelManager {
+	return &tunnelManager{srv: srv, defaultName: defaultName, tunnels: make(map[string]*agentTunnel)}
+}
+
+// start routes an agent through its own TUN interface; ifName=="" auto-allocates
+// the next free name (ligolo, ligolo1, ...). Returns the interface name.
+func (m *tunnelManager) start(s *session.Session, ifName string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if at, ok := m.tunnels[s.ID]; ok {
+		return at.ifName, nil // already routed
 	}
-	if t.stack == nil {
-		ns, err := netstack.NewStack(netstack.StackSettings{TunName: t.tunName, MaxInflight: 4096}, nil)
-		if err != nil {
-			logrus.Errorf("failed to create userland stack (need root + TUN): %v", err)
-			return
-		}
-		t.stack = ns
+	if ifName == "" {
+		ifName = m.allocNameLocked()
+	} else if m.nameInUseLocked(ifName) {
+		return "", fmt.Errorf("interface %s is already in use", ifName)
+	}
+	ns, err := netstack.NewStack(netstack.StackSettings{TunName: ifName, MaxInflight: 4096}, nil)
+	if err != nil {
+		return "", err
 	}
 	pool := netstack.NewConnPool(4096)
-	t.pool = &pool
-	t.stack.SetConnPool(&pool)
-	t.active = s
-	go t.run(s, &pool)
-	logrus.Infof("tunnel attached: routing %s through %s", s.ID, t.tunName)
+	ns.SetConnPool(&pool)
+	at := &agentTunnel{ifName: ifName, sess: s, stack: ns, pool: &pool}
+	m.tunnels[s.ID] = at
+	go m.run(at)
+	return ifName, nil
 }
 
-func (t *tunnel) run(s *session.Session, pool *netstack.ConnPool) {
+func (m *tunnelManager) run(at *agentTunnel) {
 	for {
-		tc, err := pool.Get()
+		tc, err := at.pool.Get()
 		if err != nil {
 			return
 		}
-		go node.HandlePacket(t.srv, s, t.stack.GetStack(), tc)
+		go node.HandlePacket(m.srv, at.sess, at.stack.GetStack(), tc)
 	}
 }
 
-func (t *tunnel) detach(s *session.Session) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.active == s {
-		if t.pool != nil {
-			t.pool.Close()
-			t.pool = nil
+// stop tears down an agent's tunnel and removes its TUN interface.
+func (m *tunnelManager) stop(sessionID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	at, ok := m.tunnels[sessionID]
+	if !ok {
+		return false
+	}
+	at.pool.Close()
+	at.stack.Close()
+	delete(m.tunnels, sessionID)
+	return true
+}
+
+func (m *tunnelManager) ifNameFor(sessionID string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if at, ok := m.tunnels[sessionID]; ok {
+		return at.ifName
+	}
+	return ""
+}
+
+func (m *tunnelManager) list() []*agentTunnel {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*agentTunnel, 0, len(m.tunnels))
+	for _, at := range m.tunnels {
+		out = append(out, at)
+	}
+	return out
+}
+
+func (m *tunnelManager) allocNameLocked() string {
+	for i := 0; ; i++ {
+		name := m.defaultName
+		if i > 0 {
+			name = fmt.Sprintf("%s%d", m.defaultName, i)
 		}
-		t.active = nil
-	}
-}
-
-// switchTo routes a specific agent through the TUN, replacing any current one.
-// Used by the interactive console.
-func (t *tunnel) switchTo(s *session.Session) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.active == s {
-		return nil
-	}
-	if t.pool != nil {
-		t.pool.Close()
-		t.pool = nil
-	}
-	if t.stack == nil {
-		ns, err := netstack.NewStack(netstack.StackSettings{TunName: t.tunName, MaxInflight: 4096}, nil)
-		if err != nil {
-			return err
+		if !m.nameInUseLocked(name) {
+			return name
 		}
-		t.stack = ns
 	}
-	pool := netstack.NewConnPool(4096)
-	t.pool = &pool
-	t.stack.SetConnPool(&pool)
-	t.active = s
-	go t.run(s, &pool)
-	return nil
 }
 
-// stop detaches whatever agent is currently routed.
-func (t *tunnel) stop() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.pool != nil {
-		t.pool.Close()
-		t.pool = nil
+func (m *tunnelManager) nameInUseLocked(name string) bool {
+	for _, at := range m.tunnels {
+		if at.ifName == name {
+			return true
+		}
 	}
-	t.active = nil
-}
-
-// activeID returns the routed agent's id, or "" if none.
-func (t *tunnel) activeID() string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.active == nil {
-		return ""
-	}
-	return t.active.ID
+	return false
 }
 
 func loadOrGenerateIdentity(keyHex string) auth.Identity {
