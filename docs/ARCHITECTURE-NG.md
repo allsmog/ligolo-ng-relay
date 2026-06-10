@@ -154,6 +154,23 @@ and the tunnel manager directly: `agents`, `use <id>`, `start [ifname]`/`stop`
 `kill <id>`. This gives the legacy CLI's core UX on the v2 stack. Without
 `-console` the proxy auto-routes every agent on its own interface (daemon-style).
 
+## Daemon mode, config persistence and autobind
+
+`ng-proxy -config <file>` runs as a daemon with a persisted JSON config
+(`pkg/ngconfig`): a stable server identity (so agents keep their pinned key
+across restarts), listen/PSK/operator settings, and per-agent **autobind** rules.
+When a known agent reconnects, its saved tunnel and reverse listeners are
+recreated automatically. The console's `autobind` command saves the selected
+agent's current interface + listeners into the config, keyed by the agent's
+static public key. This is the v2 replacement for the legacy viper config +
+autobind, with no external config framework.
+
+On Linux the proxy creates its own TUN interface before the gVisor stack opens
+it, using the same `ioctl` path (`IFF_TUN | IFF_NO_PI`, single queue, persisted
+via `TUNSETPERSIST`) that gVisor reopens — the v2 equivalent of the legacy CLI's
+interface-management step. Operators still assign the interface address/route
+(or a future autoroute port will).
+
 ## Multi-tunnel routing
 
 The proxy routes any number of agents simultaneously: `tunnelManager`

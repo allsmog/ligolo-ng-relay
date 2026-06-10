@@ -25,6 +25,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/nicocha30/ligolo-ng/pkg/ngconfig"
 	"github.com/nicocha30/ligolo-ng/pkg/node"
 	"github.com/nicocha30/ligolo-ng/pkg/session"
 )
@@ -33,8 +34,8 @@ import (
 // drives node.Server and the gVisor tunnel directly, giving the same core UX as
 // the legacy CLI (select an agent, route it through the TUN, manage reverse
 // listeners) without the v1 yamux-bound code.
-func runConsole(srv *node.Server, tun *tunnelManager) {
-	c := &console{srv: srv, tun: tun, listeners: map[int32]*node.ReverseListener{}}
+func runConsole(srv *node.Server, tun *tunnelManager, cfg *ngconfig.Config) {
+	c := &console{srv: srv, tun: tun, cfg: cfg, listeners: map[int32]*node.ReverseListener{}}
 	fmt.Println("ligolo-ng v2 console. type 'help' for commands.")
 	sc := bufio.NewScanner(os.Stdin)
 	c.prompt()
@@ -47,6 +48,7 @@ func runConsole(srv *node.Server, tun *tunnelManager) {
 type console struct {
 	srv       *node.Server
 	tun       *tunnelManager
+	cfg       *ngconfig.Config
 	selected  *session.Session
 	listeners map[int32]*node.ReverseListener
 }
@@ -84,6 +86,8 @@ func (c *console) dispatch(args []string) {
 		c.stopListener(args)
 	case "kill":
 		c.kill(args)
+	case "autobind":
+		c.autobind()
 	case "exit", "quit":
 		os.Exit(0)
 	default:
@@ -102,7 +106,32 @@ func (c *console) help() {
   listeners                       list reverse listeners
   stop-listener <id>              close a reverse listener
   kill <id-prefix>                terminate an agent
+  autobind                        persist the selected agent's tunnel + listeners to config
   exit                            quit`)
+}
+
+// autobind saves the selected agent's current tunnel and reverse listeners to
+// the config keyed by the agent's static key, so a daemon restores them when
+// the agent reconnects.
+func (c *console) autobind() {
+	if c.cfg == nil {
+		fmt.Println("no -config in use; start ng-proxy with -config to enable autobind")
+		return
+	}
+	if c.selected == nil {
+		fmt.Println("select an agent first (use <id>)")
+		return
+	}
+	ifName := c.tun.ifNameFor(c.selected.ID)
+	rule := ngconfig.Autobind{Interface: ifName, Route: ifName != ""}
+	for _, l := range c.selected.Listeners() {
+		rule.Listeners = append(rule.Listeners, ngconfig.ListenerRule{Network: l.Network, Bind: l.Address, To: l.To})
+	}
+	if err := c.cfg.SetAutobind(c.selected.PeerKeyHex, rule); err != nil {
+		fmt.Printf("save autobind failed: %v\n", err)
+		return
+	}
+	fmt.Printf("autobind saved for %s (key %s…)\n", c.selected.Name, c.selected.PeerKeyHex[:16])
 }
 
 func (c *console) list() {

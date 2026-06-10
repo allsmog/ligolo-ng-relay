@@ -74,6 +74,7 @@ func HandlePacket(srv *Server, sess *session.Session, nstack *stack.Stack, local
 	if magicSubnet.Contains(net.ParseIP(targetIP)) {
 		targetIP = "127.0.0.1"
 	}
+	logrus.Debugf("forward flow: %s -> %s:%d (transport=%d)", endpointID.RemoteAddress, targetIP, endpointID.LocalPort, protoTransport)
 
 	req := wire.ConnectRequest{
 		Net:       protoNet,

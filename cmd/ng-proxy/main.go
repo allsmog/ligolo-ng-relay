@@ -35,6 +35,7 @@ import (
 	"sync"
 
 	"github.com/nicocha30/ligolo-ng/pkg/auth"
+	"github.com/nicocha30/ligolo-ng/pkg/ngconfig"
 	"github.com/nicocha30/ligolo-ng/pkg/node"
 	"github.com/nicocha30/ligolo-ng/pkg/operator"
 	"github.com/nicocha30/ligolo-ng/pkg/proxy/netstack"
@@ -54,12 +55,29 @@ func main() {
 	pskStr := flag.String("psk", "", "optional pre-shared key (IKpsk2)")
 	operatorListen := flag.String("operator-listen", "", "operator hub mTLS listen addr (host:port); empty disables the hub")
 	operatorDir := flag.String("operator-config", "ligolo-operator", "directory to write the operator config bundle")
-	console := flag.Bool("console", false, "run an interactive console instead of auto-routing the first agent")
+	configPath := flag.String("config", "", "config file for stable identity + autobind (daemon mode); created if missing")
+	console := flag.Bool("console", false, "run an interactive console instead of auto-routing agents")
 	verbose := flag.Bool("v", false, "verbose logging")
 	flag.Parse()
 
 	if *verbose {
 		logrus.SetLevel(logrus.DebugLevel)
+	}
+
+	// Config-backed daemon mode: a config file gives a stable server identity
+	// across restarts and persists per-agent autobind rules.
+	var cfg *ngconfig.Config
+	if *configPath != "" {
+		cfg = loadOrInitConfig(*configPath, *listenAddr, *pskStr, *operatorListen, *operatorDir)
+		*listenAddr = cfg.Listen
+		*pskStr = cfg.PSK
+		if cfg.OperatorListen != "" {
+			*operatorListen = cfg.OperatorListen
+		}
+		if cfg.OperatorConfigDir != "" {
+			*operatorDir = cfg.OperatorConfigDir
+		}
+		*keyHex = cfg.ServerKeyHex
 	}
 
 	identity := loadOrGenerateIdentity(*keyHex)
@@ -91,15 +109,24 @@ func main() {
 
 	ctx := context.Background()
 	var tun *tunnelManager
+	var srv *node.Server
 
-	srv := node.NewServer(node.ServerConfig{
+	srv = node.NewServer(node.ServerConfig{
 		Identity: identity,
 		PSK:      []byte(*pskStr),
 		Version:  "ng",
 		OnConnect: func(s *session.Session) {
 			logrus.Infof("operator view: agent %q (%s) is now available", s.Name, s.ID)
+			// Config autobind takes precedence: restore the agent's tunnel and
+			// reverse listeners from the saved rule.
+			if cfg != nil {
+				if rule, ok := cfg.AutobindFor(s.PeerKeyHex); ok {
+					applyAutobind(tun, srv, s, rule)
+					return
+				}
+			}
 			if !*console {
-				// Non-console: auto-route each agent on its own interface.
+				// Non-console without a rule: auto-route on its own interface.
 				if ifName, err := tun.start(s, ""); err != nil {
 					logrus.Errorf("auto-route %s failed (need root + TUN): %v", s.ID, err)
 				} else {
@@ -127,10 +154,58 @@ func main() {
 	}()
 
 	if *console {
-		runConsole(srv, tun)
+		runConsole(srv, tun, cfg)
 		return
 	}
-	select {} // block forever; agents auto-route via OnConnect
+	logrus.Info("running headless; agents auto-route via OnConnect / autobind")
+	select {} // block forever
+}
+
+// loadOrInitConfig loads the config at path, or creates one (generating a stable
+// server key) seeded from the CLI flags.
+func loadOrInitConfig(path, listen, psk, operatorListen, operatorDir string) *ngconfig.Config {
+	if ngconfig.Exists(path) {
+		cfg, err := ngconfig.Load(path)
+		if err != nil {
+			logrus.Fatalf("load config %s: %v", path, err)
+		}
+		logrus.Infof("loaded config from %s", path)
+		return cfg
+	}
+	id, err := auth.GenerateIdentity()
+	if err != nil {
+		logrus.Fatalf("generate identity: %v", err)
+	}
+	cfg := ngconfig.New(path)
+	cfg.Listen = listen
+	cfg.PSK = psk
+	cfg.OperatorListen = operatorListen
+	cfg.OperatorConfigDir = operatorDir
+	cfg.ServerKeyHex = hex.EncodeToString(id.Private())
+	if err := cfg.Save(); err != nil {
+		logrus.Fatalf("write config %s: %v", path, err)
+	}
+	logrus.Infof("created config %s with a fresh server identity", path)
+	return cfg
+}
+
+// applyAutobind restores an agent's tunnel and reverse listeners from a saved
+// rule when the agent reconnects.
+func applyAutobind(tun *tunnelManager, srv *node.Server, s *session.Session, rule ngconfig.Autobind) {
+	if rule.Route {
+		if ifName, err := tun.start(s, rule.Interface); err != nil {
+			logrus.Errorf("autobind route %s failed: %v", s.ID, err)
+		} else {
+			logrus.Infof("autobind: routing %s through %s", s.Name, ifName)
+		}
+	}
+	for _, l := range rule.Listeners {
+		if _, err := srv.AddListener(context.Background(), s, l.Network, l.Bind, l.To); err != nil {
+			logrus.Errorf("autobind listener %s->%s failed: %v", l.Bind, l.To, err)
+		} else {
+			logrus.Infof("autobind: listener %s/%s -> %s on %s", l.Bind, l.Network, l.To, s.Name)
+		}
+	}
 }
 
 // startOperatorHub provisions an operator PKI, writes an operator config bundle
@@ -197,8 +272,14 @@ func (m *tunnelManager) start(s *session.Session, ifName string) (string, error)
 	} else if m.nameInUseLocked(ifName) {
 		return "", fmt.Errorf("interface %s is already in use", ifName)
 	}
+	// Create the TUN interface before the gVisor stack opens it (Linux opens an
+	// existing device by name; other platforms create it in tun.New).
+	if err := createTUN(ifName); err != nil {
+		return "", fmt.Errorf("create interface %s: %w", ifName, err)
+	}
 	ns, err := netstack.NewStack(netstack.StackSettings{TunName: ifName, MaxInflight: 4096}, nil)
 	if err != nil {
+		deleteTUN(ifName)
 		return "", err
 	}
 	pool := netstack.NewConnPool(4096)
@@ -229,6 +310,7 @@ func (m *tunnelManager) stop(sessionID string) bool {
 	}
 	at.pool.Close()
 	at.stack.Close()
+	deleteTUN(at.ifName)
 	delete(m.tunnels, sessionID)
 	return true
 }
