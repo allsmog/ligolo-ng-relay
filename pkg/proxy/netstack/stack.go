@@ -113,6 +113,18 @@ func NewStack(settings StackSettings, connPool *ConnPool) (*NetStack, error) {
 	return &ns, nil
 }
 
+// NewStackWithEndpoint builds the netstack on a caller-supplied link endpoint
+// instead of a real TUN device. It is used to drive the forward data path in
+// userspace (e.g. a channel endpoint in tests) without needing a TUN, which is
+// otherwise unavailable in sandboxed/CI environments.
+func NewStackWithEndpoint(settings StackSettings, connPool *ConnPool, linkEP stack.LinkEndpoint) (*NetStack, error) {
+	ns := NetStack{pool: connPool}
+	if _, err := ns.build(settings, linkEP); err != nil {
+		return nil, err
+	}
+	return &ns, nil
+}
+
 // GetStack returns the current Gvisor stack.Stack object
 func (s *NetStack) GetStack() *stack.Stack {
 	return s.stack
@@ -125,8 +137,20 @@ func (s *NetStack) SetConnPool(connPool *ConnPool) {
 	s.Unlock()
 }
 
-// New creates a new userland network stack (using Gvisor) that listen on a tun interface.
+// new creates a userland network stack on a real TUN interface.
 func (s *NetStack) new(stackSettings StackSettings) (*stack.Stack, error) {
+	iface, err := tun.New(stackSettings.TunName)
+	if err != nil {
+		return nil, fmt.Errorf("unable to open tun interface '%s' (tun.New %v)", stackSettings.TunName, err)
+	}
+	s.iface = iface
+	return s.build(stackSettings, iface.LinkEP)
+}
+
+// build wires the gVisor stack (forwarders, routes, options) onto the given link
+// endpoint. It is shared by the TUN path and by tests that inject a channel
+// endpoint instead of a real device.
+func (s *NetStack) build(stackSettings StackSettings, linkEP stack.LinkEndpoint) (*stack.Stack, error) {
 
 	// Create a new gvisor userland network stack.
 	ns := stack.New(stack.Options{
@@ -196,14 +220,8 @@ func (s *NetStack) new(stackSettings StackSettings) (*stack.Stack, error) {
 	ns.SetTransportProtocolHandler(tcp.ProtocolNumber, tcpHandler.HandlePacket)
 	ns.SetTransportProtocolHandler(udp.ProtocolNumber, udpHandler.HandlePacket)
 
-	iface, err := tun.New(stackSettings.TunName)
-	if err != nil {
-		return nil, fmt.Errorf("unable to open tun interface '%s' (tun.New %v)", stackSettings.TunName, err)
-	}
-	s.iface = iface
-
 	// Create a new NIC
-	if err := ns.CreateNIC(1, iface.LinkEP); err != nil {
+	if err := ns.CreateNIC(1, linkEP); err != nil {
 		return nil, errors.New(err.String())
 	}
 

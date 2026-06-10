@@ -1,0 +1,53 @@
+# Ligolo-ng v2 build targets.
+#
+# The agent is built hardened by default: stripped symbol table and DWARF
+# (-ldflags "-s -w"), no filesystem paths (-trimpath) and no VCS stamping
+# (-buildvcs=false). This yields a smaller binary with less metadata for an
+# analyst, and is the baseline for opsec. For stronger obfuscation, build with
+# `garble` (https://github.com/burrowers/garble): `GARBLE=1 make ng-agent`.
+
+GO        ?= go
+LDFLAGS   := -s -w
+BUILDFLAGS := -trimpath -buildvcs=false -ldflags '$(LDFLAGS)'
+OUT       ?= dist
+
+# Use garble for the agent when GARBLE=1 (must be installed).
+ifeq ($(GARBLE),1)
+BUILDER := garble -literals -tiny build $(BUILDFLAGS)
+else
+BUILDER := $(GO) build $(BUILDFLAGS)
+endif
+
+# Agent cross-compile matrix (OS/ARCH). Extend as needed.
+AGENT_TARGETS := \
+	linux/amd64 linux/arm64 \
+	windows/amd64 windows/arm64 \
+	darwin/amd64 darwin/arm64
+
+.PHONY: ng-all ng-proxy ng-operator ng-agent ng-agent-all clean-ng
+
+ng-all: ng-proxy ng-operator ng-agent
+
+ng-proxy:
+	$(GO) build $(BUILDFLAGS) -o $(OUT)/ng-proxy ./cmd/ng-proxy
+
+ng-operator:
+	$(GO) build $(BUILDFLAGS) -o $(OUT)/ng-operator ./cmd/ng-operator
+
+# Host agent build (hardened, optionally garbled).
+ng-agent:
+	$(BUILDER) -o $(OUT)/ng-agent ./cmd/ng-agent
+
+# Cross-compiled hardened agents for every target.
+ng-agent-all:
+	@mkdir -p $(OUT)
+	@for t in $(AGENT_TARGETS); do \
+		os=$${t%/*}; arch=$${t#*/}; \
+		ext=""; [ "$$os" = "windows" ] && ext=".exe"; \
+		echo "building agent $$os/$$arch"; \
+		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 $(BUILDER) \
+			-o $(OUT)/ng-agent-$$os-$$arch$$ext ./cmd/ng-agent || exit 1; \
+	done
+
+clean-ng:
+	rm -rf $(OUT)

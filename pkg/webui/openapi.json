@@ -1,0 +1,139 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Ligolo-ng Operator API",
+    "description": "Operator control plane for ligolo-ng: discover agents and drive tunnels, host routes, and reverse listeners. This is the same capability surface exposed to AI agents via the ng-mcp MCP server. All endpoints except this document require a bearer token (the proxy's -web-token).",
+    "version": "ng"
+  },
+  "servers": [
+    { "url": "/", "description": "ng-proxy -web-listen address" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The token printed by ng-proxy at startup (-web-token)."
+      }
+    },
+    "schemas": {
+      "Listener": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "format": "int32" },
+          "network": { "type": "string", "example": "tcp" },
+          "bind": { "type": "string", "example": "0.0.0.0:1234" },
+          "to": { "type": "string", "example": "127.0.0.1:8080" }
+        }
+      },
+      "Agent": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "online": { "type": "boolean" },
+          "caps": { "type": "integer", "format": "int32" },
+          "interface": { "type": "string", "description": "tunnel interface name, empty if not routed" },
+          "networks": { "type": "array", "items": { "type": "string" }, "description": "advertised subnets" },
+          "listeners": { "type": "array", "items": { "$ref": "#/components/schemas/Listener" } }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": { "error": { "type": "string" } }
+      }
+    }
+  },
+  "security": [ { "bearerToken": [] } ],
+  "paths": {
+    "/api/openapi.json": {
+      "get": {
+        "summary": "This OpenAPI document",
+        "description": "Returns this specification. No authentication required, so an agent can discover the API before authenticating.",
+        "security": [],
+        "responses": { "200": { "description": "OpenAPI 3 document", "content": { "application/json": {} } } }
+      }
+    },
+    "/api/agents": {
+      "get": {
+        "summary": "List connected agents",
+        "responses": {
+          "200": {
+            "description": "Agent snapshots",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Agent" } } } }
+          },
+          "401": { "description": "Missing or invalid token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/agents/{id}/tunnel": {
+      "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } } ],
+      "post": {
+        "summary": "Start a TUN tunnel for the agent",
+        "requestBody": {
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "interface": { "type": "string", "description": "optional interface name; auto-generated if omitted" } } } } }
+        },
+        "responses": {
+          "200": { "description": "Tunnel started", "content": { "application/json": { "schema": { "type": "object", "properties": { "interface": { "type": "string" } } } } } },
+          "400": { "description": "Error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "delete": {
+        "summary": "Stop the agent's TUN tunnel",
+        "responses": {
+          "200": { "description": "Stopped", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string" } } } } } },
+          "400": { "description": "Error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/agents/{id}/autoroute": {
+      "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } } ],
+      "post": {
+        "summary": "Install host routes for the agent's advertised networks",
+        "description": "Modifies the operator host's routing table. Requires a tunnel to be started first.",
+        "responses": {
+          "200": { "description": "Routes installed", "content": { "application/json": { "schema": { "type": "object", "properties": { "routes": { "type": "array", "items": { "type": "string" } } } } } } },
+          "400": { "description": "Error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/agents/{id}/listeners": {
+      "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } } ],
+      "post": {
+        "summary": "Create a reverse listener (port forward) on the agent",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": [ "network", "bind", "to" ], "properties": { "network": { "type": "string", "example": "tcp" }, "bind": { "type": "string", "example": "0.0.0.0:1234" }, "to": { "type": "string", "example": "127.0.0.1:8080" } } } } }
+        },
+        "responses": {
+          "200": { "description": "Listener created", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "integer", "format": "int32" } } } } } },
+          "400": { "description": "Error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/agents/{id}/listeners/{lid}": {
+      "parameters": [
+        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+        { "name": "lid", "in": "path", "required": true, "schema": { "type": "integer", "format": "int32" } }
+      ],
+      "delete": {
+        "summary": "Stop a reverse listener",
+        "responses": {
+          "200": { "description": "Stopped", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string" } } } } } },
+          "400": { "description": "Error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/agents/{id}/kill": {
+      "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } } ],
+      "post": {
+        "summary": "Forcibly disconnect the agent",
+        "description": "Destructive: tears down the agent's session, tunnels, and listeners.",
+        "responses": {
+          "200": { "description": "Killed", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string" } } } } } },
+          "400": { "description": "Error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    }
+  }
+}

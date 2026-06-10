@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ligolo-ng v2</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#c9d1d9; --accent:#2f81f7; --green:#3fb950; --red:#f85149; --muted:#8b949e; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  header { padding:14px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  header .sp { flex:1; }
+  main { padding:20px; max-width:1100px; margin:0 auto; }
+  .agent { background:var(--panel); border:1px solid var(--border); border-radius:8px; margin-bottom:16px; }
+  .agent h2 { margin:0; padding:12px 16px; font-size:14px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:10px; }
+  .dot { width:9px; height:9px; border-radius:50%; display:inline-block; }
+  .on { background:var(--green); } .off { background:var(--red); }
+  .body { padding:12px 16px; display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  .col h3 { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin:0 0 8px; }
+  table { width:100%; border-collapse:collapse; }
+  td,th { text-align:left; padding:4px 6px; border-bottom:1px solid var(--border); font-weight:normal; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:6px 10px; cursor:pointer; font:inherit; }
+  button.ghost { background:transparent; border:1px solid var(--border); color:var(--fg); }
+  button.danger { background:var(--red); }
+  button:hover { filter:brightness(1.1); }
+  input { background:#0d1117; border:1px solid var(--border); color:var(--fg); border-radius:6px; padding:6px 8px; font:inherit; width:100%; }
+  .row { display:flex; gap:6px; margin-top:8px; align-items:center; flex-wrap:wrap; }
+  .pill { font-size:12px; color:var(--muted); border:1px solid var(--border); border-radius:10px; padding:1px 8px; }
+  .muted { color:var(--muted); }
+  #login { max-width:420px; margin:80px auto; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:24px; }
+  #err { color:var(--red); min-height:20px; }
+  .hidden { display:none; }
+  code { color:var(--accent); }
+</style>
+</head>
+<body>
+<div id="login">
+  <h1>Ligolo-ng v2</h1>
+  <p class="muted">Enter the access token printed by the proxy.</p>
+  <input id="token" type="password" placeholder="access token" autocomplete="off">
+  <div class="row"><button onclick="login()">Connect</button></div>
+  <p id="loginerr" style="color:var(--red)"></p>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <h1>Ligolo-ng v2</h1>
+    <span class="pill" id="count">0 agents</span>
+    <span class="sp"></span>
+    <button class="ghost" onclick="refresh()">Refresh</button>
+    <button class="ghost" onclick="logout()">Logout</button>
+  </header>
+  <main id="agents"></main>
+</div>
+
+<script>
+let TOKEN = sessionStorage.getItem("ligolo_token") || "";
+
+function hdr() { return { "Authorization": "Bearer " + TOKEN, "Content-Type": "application/json" }; }
+
+async function api(method, path, body) {
+  const opt = { method, headers: hdr() };
+  if (body) opt.body = JSON.stringify(body);
+  const r = await fetch(path, opt);
+  if (r.status === 401) { logout(); throw new Error("unauthorized"); }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
+  return data;
+}
+
+function login() {
+  TOKEN = document.getElementById("token").value.trim();
+  api("GET", "/api/agents").then(() => {
+    sessionStorage.setItem("ligolo_token", TOKEN);
+    document.getElementById("login").classList.add("hidden");
+    document.getElementById("app").classList.remove("hidden");
+    refresh();
+    setInterval(refresh, 4000);
+  }).catch(e => document.getElementById("loginerr").textContent = e.message);
+}
+
+function logout() {
+  sessionStorage.removeItem("ligolo_token"); TOKEN = "";
+  document.getElementById("app").classList.add("hidden");
+  document.getElementById("login").classList.remove("hidden");
+}
+
+function esc(s){ return (s+"").replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+async function refresh() {
+  let agents;
+  try { agents = await api("GET", "/api/agents"); } catch (e) { return; }
+  document.getElementById("count").textContent = agents.length + " agent" + (agents.length===1?"":"s");
+  const root = document.getElementById("agents");
+  root.innerHTML = agents.map(renderAgent).join("") || '<p class="muted">No agents connected.</p>';
+}
+
+function renderAgent(a) {
+  const nets = (a.networks||[]).map(n=>`<span class="pill">${esc(n)}</span>`).join(" ") || '<span class="muted">none advertised</span>';
+  const lis = (a.listeners||[]).map(l =>
+    `<tr><td>#${l.id}</td><td>${esc(l.network)}</td><td>${esc(l.bind)}</td><td>→ ${esc(l.to)}</td>
+     <td><button class="ghost danger" onclick="stopListener('${a.id}',${l.id})">stop</button></td></tr>`
+  ).join("") || '<tr><td colspan="5" class="muted">none</td></tr>';
+  const tun = a.interface
+    ? `routed via <code>${esc(a.interface)}</code> <button class="ghost" onclick="autoroute('${a.id}')">autoroute</button> <button class="ghost danger" onclick="stopTunnel('${a.id}')">stop</button>`
+    : `<button onclick="startTunnel('${a.id}')">start tunnel</button>`;
+  return `<section class="agent">
+    <h2><span class="dot ${a.online?'on':'off'}"></span>${esc(a.name)} <span class="muted">${esc(a.id)}</span>
+      <span class="sp" style="flex:1"></span>
+      <button class="ghost danger" onclick="kill('${a.id}')">kill</button>
+    </h2>
+    <div class="body">
+      <div class="col">
+        <h3>Tunnel</h3><div class="row">${tun}</div>
+        <h3 style="margin-top:14px">Networks</h3><div class="row">${nets}</div>
+      </div>
+      <div class="col">
+        <h3>Reverse listeners</h3>
+        <table>${lis}</table>
+        <div class="row">
+          <input id="net-${a.id}" placeholder="tcp" style="width:60px" value="tcp">
+          <input id="bind-${a.id}" placeholder="0.0.0.0:8080" style="flex:1">
+          <input id="to-${a.id}" placeholder="127.0.0.1:80" style="flex:1">
+          <button onclick="addListener('${a.id}')">add</button>
+        </div>
+      </div>
+    </div>
+  </section>`;
+}
+
+const v = id => document.getElementById(id).value.trim();
+function startTunnel(id){ api("POST",`/api/agents/${id}/tunnel`,{}).then(refresh).catch(alert); }
+function stopTunnel(id){ api("DELETE",`/api/agents/${id}/tunnel`).then(refresh).catch(alert); }
+function autoroute(id){ api("POST",`/api/agents/${id}/autoroute`,{}).then(r=>{ alert("routes: "+(r.routes||[]).join(", ")||"none"); }).catch(alert); }
+function addListener(id){ api("POST",`/api/agents/${id}/listeners`,{network:v('net-'+id),bind:v('bind-'+id),to:v('to-'+id)}).then(refresh).catch(alert); }
+function stopListener(id,lid){ api("DELETE",`/api/agents/${id}/listeners/${lid}`).then(refresh).catch(alert); }
+function kill(id){ if(confirm("Terminate agent "+id+"?")) api("POST",`/api/agents/${id}/kill`,{}).then(refresh).catch(alert); }
+
+if (TOKEN) login();
+</script>
+</body>
+</html>
