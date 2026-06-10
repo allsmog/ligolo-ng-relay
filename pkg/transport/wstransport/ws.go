@@ -59,10 +59,23 @@ func (s *session) Kind() transport.Kind                                 { return
 type Dialer struct {
 	TLSConfig *tls.Config
 	UserAgent string
+	// Host overrides the HTTP Host header, enabling domain fronting: dial a CDN
+	// edge with a benign SNI (TLSConfig.ServerName) while the encrypted Host
+	// header names the real backend.
+	Host string
 }
 
 func NewDialer(tlsConfig *tls.Config) *Dialer {
 	return &Dialer{TLSConfig: tlsConfig, UserAgent: "Mozilla/5.0"}
+}
+
+// NewDialerOpts builds a Dialer with a custom User-Agent and (optional) Host
+// header for domain fronting.
+func NewDialerOpts(tlsConfig *tls.Config, userAgent, host string) *Dialer {
+	if userAgent == "" {
+		userAgent = "Mozilla/5.0"
+	}
+	return &Dialer{TLSConfig: tlsConfig, UserAgent: userAgent, Host: host}
 }
 
 func (d *Dialer) Dial(ctx context.Context, addr string) (transport.Session, error) {
@@ -72,7 +85,11 @@ func (d *Dialer) Dial(ctx context.Context, addr string) (transport.Session, erro
 	}
 	hdr := http.Header{}
 	hdr.Set("User-Agent", d.UserAgent)
-	ws, _, err := websocket.Dial(ctx, addr, &websocket.DialOptions{HTTPClient: httpClient, HTTPHeader: hdr})
+	ws, _, err := websocket.Dial(ctx, addr, &websocket.DialOptions{
+		HTTPClient: httpClient,
+		HTTPHeader: hdr,
+		Host:       d.Host,
+	})
 	if err != nil {
 		return nil, err
 	}

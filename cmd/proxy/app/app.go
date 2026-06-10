@@ -97,7 +97,7 @@ func RegisterAgent(agent *controller.LigoloAgent) error {
 					}
 				}
 			}
-			
+
 			if sessionFunctional {
 				// Session is truly alive and working, reject duplicate
 				logrus.Infof("Agent %s already connected, rejecting duplicate from %s", agent.SessionID, agent.Session.RemoteAddr())
@@ -107,23 +107,23 @@ func RegisterAgent(agent *controller.LigoloAgent) error {
 				}
 				return fmt.Errorf("agent %s already connected", agent.SessionID)
 			}
-			
+
 			// Session is dead or non-functional, perform recovery
 			logrus.Infof("Recovering agent: %s (ID: %d)", registeredAgents.Name, agentID)
 			recovered = true
-			
+
 			// Close old session if it exists
 			if registeredAgents.Session != nil {
 				registeredAgents.Session.Close()
 			}
-			
+
 			// Update to new session
 			registeredAgents.Session = agent.Session
 
 			// FIXED: Check if tunnel was running and clean up properly
 			savedInterface := registeredAgents.Interface
 			tunnelWasRunning := registeredAgents.Running
-			
+
 			// ALWAYS restore tunnel if an interface was previously configured
 			if savedInterface != "" {
 				logrus.Infof("Restoring tunnel for agent %s on interface %s", registeredAgents.Name, savedInterface)
@@ -140,7 +140,7 @@ func RegisterAgent(agent *controller.LigoloAgent) error {
 
 				// Reset running flag
 				registeredAgents.Running = false
-				
+
 				// CRITICAL: Clean up any stale interface state
 				if netinfo.InterfaceExist(savedInterface) {
 					logrus.Infof("Cleaning up stale interface %s...", savedInterface)
@@ -169,7 +169,7 @@ func RegisterAgent(agent *controller.LigoloAgent) error {
 						time.Sleep(200 * time.Millisecond)
 					}
 				}
-				
+
 				// Recreate interface with fresh fd
 				logrus.Infof("Recreating interface %s...", savedInterface)
 				if err := netinfo.CreateTUN(savedInterface); err != nil {
@@ -222,14 +222,14 @@ func RegisterAgent(agent *controller.LigoloAgent) error {
 			// Now recreate listeners on the agent side with the new session
 			for _, listenerInfo := range listenersToRestore {
 				logrus.Infof("Restoring listener: [%s] %s => %s", listenerInfo.network, listenerInfo.listenerAddr, listenerInfo.redirectAddr)
-				
+
 				// AddListener will create a new listener on the agent side
 				proxyListener, err := registeredAgents.AddListener(listenerInfo.listenerAddr, listenerInfo.network, listenerInfo.redirectAddr)
 				if err != nil {
 					logrus.Errorf("Failed to restore listener: %v", err)
 					continue
 				}
-				
+
 				// Start the relay for the new listener
 				go func(l *proxy.LigoloListener, a *controller.LigoloAgent) {
 					err := l.StartRelay()
@@ -237,7 +237,7 @@ func RegisterAgent(agent *controller.LigoloAgent) error {
 						logrus.WithFields(logrus.Fields{"listener": l.String(), "agent": a.Name, "id": a.SessionID}).Warnf("Listener relay ended: %v", err)
 					}
 				}(proxyListener, registeredAgents)
-				
+
 				logrus.Infof("Listener restored successfully: %s", proxyListener.String())
 			}
 			return nil
@@ -254,7 +254,7 @@ func RegisterAgent(agent *controller.LigoloAgent) error {
 			}
 		}
 	}
-	
+
 	AgentCounter++
 	AgentList[AgentCounter] = agent
 	return nil
@@ -265,9 +265,9 @@ func StartTunnel(agent *controller.LigoloAgent, tunName string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	interfaceExists := netinfo.InterfaceExist(tunName)
-	
+
 	// Create interface if needed
 	if _, ok := configState[tunName]; ok {
 		if runtime.GOOS == "linux" && !interfaceExists {
@@ -320,7 +320,7 @@ func StartTunnel(agent *controller.LigoloAgent, tunName string) error {
 	agent.Running = true
 
 	ctx, cancelTunnel := context.WithCancel(context.Background())
-	
+
 	go ligoloStack.HandleSession(agent.Session, ctx)
 
 	// Watchdog
@@ -331,7 +331,7 @@ func StartTunnel(agent *controller.LigoloAgent, tunName string) error {
 				logrus.Infof("Closing tunnel to %s (%s)...", agent.Name, agent.SessionID)
 				cancelTunnel()
 				agent.Running = false
-				
+
 				// Clean up routes on user stop
 				if netinfo.InterfaceExist(agent.Interface) {
 					tun, err := netinfo.GetTunByName(agent.Interface)
@@ -348,14 +348,14 @@ func StartTunnel(agent *controller.LigoloAgent, tunName string) error {
 					}
 				}
 				return
-				
+
 			case <-agent.Session.CloseChan():
 				logrus.Warnf("Lost tunnel connection with agent %s (%s)!", agent.Name, agent.SessionID)
-				
+
 				// FIXED: Properly clean up the old tunnel when agent drops
 				agent.Running = false
 				cancelTunnel()
-				
+
 				// CRITICAL FIX: Remove routes from the stale interface
 				// These routes point to the old (now closed) TUN fd
 				if netinfo.InterfaceExist(agent.Interface) {
@@ -380,7 +380,7 @@ func StartTunnel(agent *controller.LigoloAgent, tunName string) error {
 						logrus.Warnf("Could not destroy interface: %v", err)
 					}
 				}
-				
+
 				if currentAgent, ok := AgentList[CurrentAgentID]; ok {
 					if currentAgent.SessionID == agent.SessionID {
 						App.SetDefaultPrompt()
@@ -612,7 +612,7 @@ func Run() {
 		},
 	})
 
-App.AddCommand(&grumble.Command{
+	App.AddCommand(&grumble.Command{
 		Name:  "ifconfig",
 		Help:  "Show agent interfaces",
 		Usage: "ifconfig",

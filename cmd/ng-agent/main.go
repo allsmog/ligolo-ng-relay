@@ -28,6 +28,7 @@ import (
 
 	"github.com/nicocha30/ligolo-ng/pkg/auth"
 	"github.com/nicocha30/ligolo-ng/pkg/node"
+	"github.com/nicocha30/ligolo-ng/pkg/opsec"
 	"github.com/nicocha30/ligolo-ng/pkg/transport"
 	"github.com/nicocha30/ligolo-ng/pkg/transport/muxtransport"
 	"github.com/nicocha30/ligolo-ng/pkg/transport/quictransport"
@@ -42,8 +43,18 @@ func main() {
 	keyHex := flag.String("key", "", "agent static private key (hex); generated if empty")
 	reconnect := flag.Bool("reconnect", true, "auto-reconnect after the session is lost")
 	reconnectDelay := flag.Int("reconnect-delay", 10, "reconnect delay in seconds")
+	jitter := flag.Float64("jitter", 0.3, "reconnect-delay jitter fraction (0..1) to break periodic beaconing")
+	sni := flag.String("sni", "", "TLS SNI / ServerName to present (camouflage / domain-front front domain)")
+	alpn := flag.String("alpn", "", "TLS ALPN to present (must match the server; default h3 for quic)")
+	frontHost := flag.String("host", "", "HTTP Host header for ws/wss (domain fronting)")
+	userAgent := flag.String("ua", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36", "HTTP User-Agent for ws/wss")
+	procName := flag.String("procname", "", "masquerade the process name (Linux; e.g. dbus-daemon)")
 	verbose := flag.Bool("v", false, "verbose logging")
 	flag.Parse()
+
+	if *procName != "" {
+		opsec.SetProcessName(*procName)
+	}
 
 	if *verbose {
 		logrus.SetLevel(logrus.DebugLevel)
@@ -63,8 +74,14 @@ func main() {
 
 	// Transport TLS validation is intentionally skipped: the Noise handshake
 	// against the pinned server key is the real authentication, independent of
-	// any TLS certificate or host trust store.
+	// any TLS certificate or host trust store. SNI/ALPN are set for camouflage.
 	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	if *sni != "" {
+		tlsConfig.ServerName = *sni
+	}
+	if *alpn != "" {
+		tlsConfig.NextProtos = []string{*alpn}
+	}
 
 	var dialer transport.Dialer
 	serverAddr := host // quic/tls take host:port
@@ -74,10 +91,10 @@ func main() {
 	case "tls":
 		dialer = muxtransport.NewDialer(tlsConfig)
 	case "ws":
-		dialer = wstransport.NewDialer(nil)
+		dialer = wstransport.NewDialerOpts(nil, *userAgent, *frontHost)
 		serverAddr = *connectAddr // websocket dial needs the full URL
 	case "wss":
-		dialer = wstransport.NewDialer(tlsConfig)
+		dialer = wstransport.NewDialerOpts(tlsConfig, *userAgent, *frontHost)
 		serverAddr = *connectAddr
 	default:
 		logrus.Fatalf("unknown transport scheme %q (use quic://, tls://, ws:// or wss://)", scheme)
@@ -100,8 +117,9 @@ func main() {
 		if !*reconnect {
 			return
 		}
-		logrus.Infof("reconnecting in %d seconds...", *reconnectDelay)
-		time.Sleep(time.Duration(*reconnectDelay) * time.Second)
+		delay := opsec.Jitter(time.Duration(*reconnectDelay)*time.Second, *jitter)
+		logrus.Infof("reconnecting in %.0f seconds...", delay.Seconds())
+		time.Sleep(delay)
 	}
 }
 

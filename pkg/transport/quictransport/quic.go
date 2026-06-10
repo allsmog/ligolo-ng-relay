@@ -33,11 +33,24 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-// ALPN is the QUIC application protocol identifier negotiated during the TLS
-// handshake. It doubles as a coarse protocol version marker.
-const ALPN = "ligolo/2"
+// DefaultALPN is the QUIC application protocol negotiated when the caller does
+// not set its own. It deliberately mimics HTTP/3 ("h3") rather than advertising
+// a ligolo-specific identifier, which would be an obvious on-the-wire
+// fingerprint. Callers can override it via tls.Config.NextProtos (the agent and
+// server must agree).
+const DefaultALPN = "h3"
 
 var errNoTLS = errors.New("quictransport: a TLS configuration is required")
+
+// withALPN returns a clone of cfg with NextProtos defaulted to DefaultALPN when
+// the caller has not set one.
+func withALPN(cfg *tls.Config) *tls.Config {
+	cfg = cfg.Clone()
+	if len(cfg.NextProtos) == 0 {
+		cfg.NextProtos = []string{DefaultALPN}
+	}
+	return cfg
+}
 
 func defaultConfig() *quic.Config {
 	return &quic.Config{
@@ -123,9 +136,7 @@ func NewDialer(tlsConfig *tls.Config) *Dialer {
 	if tlsConfig == nil {
 		tlsConfig = &tls.Config{}
 	}
-	tlsConfig = tlsConfig.Clone()
-	tlsConfig.NextProtos = []string{ALPN}
-	return &Dialer{TLSConfig: tlsConfig, Config: defaultConfig()}
+	return &Dialer{TLSConfig: withALPN(tlsConfig), Config: defaultConfig()}
 }
 
 func (d *Dialer) Dial(ctx context.Context, addr string) (transport.Session, error) {
@@ -147,9 +158,7 @@ func Listen(addr string, tlsConfig *tls.Config) (*Listener, error) {
 	if tlsConfig == nil {
 		return nil, errNoTLS
 	}
-	tlsConfig = tlsConfig.Clone()
-	tlsConfig.NextProtos = []string{ALPN}
-	ql, err := quic.ListenAddr(addr, tlsConfig, defaultConfig())
+	ql, err := quic.ListenAddr(addr, withALPN(tlsConfig), defaultConfig())
 	if err != nil {
 		return nil, err
 	}

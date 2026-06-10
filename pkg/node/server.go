@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/nicocha30/ligolo-ng/pkg/auth"
+	"github.com/nicocha30/ligolo-ng/pkg/opsec"
 	"github.com/nicocha30/ligolo-ng/pkg/session"
 	"github.com/nicocha30/ligolo-ng/pkg/transport"
 	"github.com/nicocha30/ligolo-ng/pkg/wire"
@@ -36,6 +37,7 @@ type ServerConfig struct {
 	PSK               []byte        // optional pre-shared key (must match agents)
 	Version           string
 	HeartbeatInterval time.Duration // 0 -> default 30s
+	HeartbeatJitter   float64       // fraction (0..1) of jitter applied to the heartbeat; 0 -> default 0.2
 	LivenessTimeout   time.Duration // 0 -> default 90s
 	ResumeGrace       time.Duration // how long an offline session is retained for resume; 0 -> default 5m
 
@@ -142,6 +144,9 @@ func (s *Server) broadcast(kind EventKind, sess *session.Session) {
 func NewServer(cfg ServerConfig) *Server {
 	if cfg.HeartbeatInterval == 0 {
 		cfg.HeartbeatInterval = 30 * time.Second
+	}
+	if cfg.HeartbeatJitter == 0 {
+		cfg.HeartbeatJitter = 0.2
 	}
 	if cfg.LivenessTimeout == 0 {
 		cfg.LivenessTimeout = 90 * time.Second
@@ -325,8 +330,10 @@ func (s *Server) runControl(ctx context.Context, sess *session.Session, ctrl *wi
 		}
 	}()
 
-	ticker := time.NewTicker(s.cfg.HeartbeatInterval)
-	defer ticker.Stop()
+	// Jittered timer so the heartbeat (and thus the connection's keepalive
+	// traffic) is not perfectly periodic, which is trivial to fingerprint.
+	timer := time.NewTimer(opsec.Jitter(s.cfg.HeartbeatInterval, s.cfg.HeartbeatJitter))
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -334,7 +341,7 @@ func (s *Server) runControl(ctx context.Context, sess *session.Session, ctrl *wi
 		case err := <-readErr:
 			logrus.Infof("agent %s control stream closed: %v", sess.ID, err)
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			if time.Since(sess.LastSeen()) > s.cfg.LivenessTimeout {
 				logrus.Warnf("agent %s missed liveness timeout, dropping", sess.ID)
 				return
@@ -344,6 +351,7 @@ func (s *Server) runControl(ctx context.Context, sess *session.Session, ctrl *wi
 				logrus.Infof("agent %s heartbeat send failed: %v", sess.ID, err)
 				return
 			}
+			timer.Reset(opsec.Jitter(s.cfg.HeartbeatInterval, s.cfg.HeartbeatJitter))
 		}
 	}
 }

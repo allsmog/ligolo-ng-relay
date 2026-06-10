@@ -63,6 +63,7 @@ func main() {
 	autoroute := flag.Bool("autoroute", false, "auto-install routes for each agent's advertised networks")
 	webListen := flag.String("web-listen", "", "web UI listen addr (host:port); empty disables it")
 	webToken := flag.String("web-token", "", "web UI access token; generated if empty")
+	alpn := flag.String("alpn", "", "TLS ALPN to negotiate (must match agents; default h3 for quic)")
 	verbose := flag.Bool("v", false, "verbose logging")
 	flag.Parse()
 
@@ -93,6 +94,9 @@ func main() {
 
 	// Ephemeral self-signed transport certificate; security is from Noise.
 	tlsConfig := selfSignedTLS()
+	if *alpn != "" {
+		tlsConfig.NextProtos = []string{*alpn}
+	}
 
 	var ln transport.Listener
 	var err error

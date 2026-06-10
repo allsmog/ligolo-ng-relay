@@ -65,3 +65,43 @@ func TestQUICDatagrams(t *testing.T) {
 		t.Errorf("got %q, want %q", got, "ping-dgram")
 	}
 }
+
+func TestALPNNegotiation(t *testing.T) {
+	crt, err := tlsutils.NewSelfCert(nil).GetCertificate("alpn-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Server defaults to DefaultALPN ("h3") — no ligolo-specific fingerprint.
+	ln, err := quictransport.Listen("127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{*crt}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			if _, err := ln.Accept(context.Background()); err != nil {
+				return
+			}
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Matching ALPN (default h3 on both ends) connects.
+	if _, err := quictransport.NewDialer(&tls.Config{InsecureSkipVerify: true}).Dial(ctx, ln.Addr().String()); err != nil {
+		t.Fatalf("matching ALPN should connect: %v", err)
+	}
+
+	// Mismatched ALPN ("h2" vs "h3") must be rejected by the TLS handshake.
+	bad := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}}
+	if _, err := quictransport.NewDialer(bad).Dial(ctx, ln.Addr().String()); err == nil {
+		t.Fatal("mismatched ALPN should fail to connect")
+	}
+}
+
+func TestDefaultALPNIsBenign(t *testing.T) {
+	if quictransport.DefaultALPN == "ligolo/2" || quictransport.DefaultALPN == "" {
+		t.Fatalf("default ALPN %q is a fingerprint; want a benign value like h3", quictransport.DefaultALPN)
+	}
+}
