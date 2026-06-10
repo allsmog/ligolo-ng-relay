@@ -35,6 +35,9 @@ import (
 //go:embed index.html
 var indexHTML []byte
 
+//go:embed openapi.json
+var openAPISpec []byte
+
 // AgentView is the operator-facing snapshot of an agent for the web UI.
 type AgentView struct {
 	ID        string         `json:"id"`
@@ -110,6 +113,12 @@ func (s *Server) routes() {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(indexHTML)
+	})
+	// Unauthenticated so an agent (or the ng-mcp bridge) can discover the API
+	// shape before presenting a token. The spec contains no secrets.
+	s.mux.HandleFunc("GET /api/openapi.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(openAPISpec)
 	})
 	s.mux.HandleFunc("GET /api/agents", s.auth(s.handleAgents))
 	s.mux.HandleFunc("POST /api/agents/{id}/tunnel", s.auth(s.handleStartTunnel))

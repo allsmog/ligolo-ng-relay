@@ -100,6 +100,22 @@ func TestAgentsAndActions(t *testing.T) {
 	}
 }
 
+func TestServesOpenAPISpecWithoutAuth(t *testing.T) {
+	ts, _ := newTestServer(t)
+	r := do(t, ts, "GET", "/api/openapi.json", "", "")
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("openapi: status %d, want 200 without auth", r.StatusCode)
+	}
+	var spec map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
+		t.Fatalf("openapi spec is not valid JSON: %v", err)
+	}
+	paths, ok := spec["paths"].(map[string]any)
+	if !ok || paths["/api/agents"] == nil {
+		t.Errorf("openapi spec missing documented paths: %v", spec["paths"])
+	}
+}
+
 func TestServesIndex(t *testing.T) {
 	ts, _ := newTestServer(t)
 	r := do(t, ts, "GET", "/", "", "")
