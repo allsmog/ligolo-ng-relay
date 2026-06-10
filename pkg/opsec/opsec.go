@@ -48,3 +48,26 @@ func Jitter(d time.Duration, frac float64) time.Duration {
 func SetProcessName(name string) {
 	setProcessName(name)
 }
+
+// benignProcNames are common, unremarkable Linux daemon names that fit within
+// the 15-byte PR_SET_NAME limit. They are deliberately boring: a process called
+// one of these draws no attention in ps/top output.
+var benignProcNames = []string{
+	"dbus-daemon",
+	"systemd-resolve",
+	"systemd-logind",
+	"gmain",
+	"gdbus",
+	"pulseaudio",
+	"rsyslogd",
+	"cron",
+	"accounts-daemon",
+	"packagekitd",
+}
+
+// RandomProcessName returns a randomly chosen benign daemon name suitable for
+// SetProcessName. Use it when you want masquerade without committing to a
+// specific name (e.g. the agent's "-procname auto").
+func RandomProcessName() string {
+	return benignProcNames[rand.IntN(len(benignProcNames))]
+}

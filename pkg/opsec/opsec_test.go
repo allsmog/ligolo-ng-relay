@@ -5,6 +5,19 @@ import (
 	"time"
 )
 
+func TestRandomProcessName(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		n := RandomProcessName()
+		if n == "" {
+			t.Fatal("RandomProcessName returned empty")
+		}
+		// Must fit the kernel PR_SET_NAME limit or SetProcessName silently truncates.
+		if len(n) > 15 {
+			t.Fatalf("name %q exceeds 15-byte PR_SET_NAME limit", n)
+		}
+	}
+}
+
 func TestJitterBounds(t *testing.T) {
 	base := 10 * time.Second
 	if Jitter(base, 0) != base {

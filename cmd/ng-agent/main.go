@@ -48,11 +48,13 @@ func main() {
 	alpn := flag.String("alpn", "", "TLS ALPN to present (must match the server; default h3 for quic)")
 	frontHost := flag.String("host", "", "HTTP Host header for ws/wss (domain fronting)")
 	userAgent := flag.String("ua", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36", "HTTP User-Agent for ws/wss")
-	procName := flag.String("procname", "", "masquerade the process name (Linux; e.g. dbus-daemon)")
+	procName := flag.String("procname", "", "masquerade the process name (Linux; e.g. dbus-daemon, or \"auto\" for a random benign name)")
 	verbose := flag.Bool("v", false, "verbose logging")
 	flag.Parse()
 
-	if *procName != "" {
+	if *procName == "auto" {
+		opsec.SetProcessName(opsec.RandomProcessName())
+	} else if *procName != "" {
 		opsec.SetProcessName(*procName)
 	}
 
