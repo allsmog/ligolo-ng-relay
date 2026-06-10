@@ -86,6 +86,8 @@ func (c *console) dispatch(args []string) {
 		c.stopListener(args)
 	case "kill":
 		c.kill(args)
+	case "autoroute":
+		c.autoroute()
 	case "autobind":
 		c.autobind()
 	case "exit", "quit":
@@ -105,9 +107,32 @@ func (c *console) help() {
   listener <tcp|udp> <bind> <to>  open a reverse listener on the selected agent
   listeners                       list reverse listeners
   stop-listener <id>              close a reverse listener
+  autoroute                       install routes for the selected agent's networks
   kill <id-prefix>                terminate an agent
   autobind                        persist the selected agent's tunnel + listeners to config
   exit                            quit`)
+}
+
+// autoroute installs routes for the selected agent's advertised networks via its
+// active tunnel interface, so the operator can reach them without manual setup.
+func (c *console) autoroute() {
+	if c.selected == nil {
+		fmt.Println("select an agent first (use <id>)")
+		return
+	}
+	ifName := c.tun.ifNameFor(c.selected.ID)
+	if ifName == "" {
+		fmt.Println("start a tunnel for this agent first (start)")
+		return
+	}
+	added := applyAutoroute(ifName, c.selected)
+	if len(added) == 0 {
+		fmt.Println("no routable networks advertised by the agent")
+		return
+	}
+	for _, s := range added {
+		fmt.Printf("routed %s via %s\n", s, ifName)
+	}
 }
 
 // autobind saves the selected agent's current tunnel and reverse listeners to
@@ -123,7 +148,11 @@ func (c *console) autobind() {
 		return
 	}
 	ifName := c.tun.ifNameFor(c.selected.ID)
-	rule := ngconfig.Autobind{Interface: ifName, Route: ifName != ""}
+	rule := ngconfig.Autobind{
+		Interface: ifName,
+		Route:     ifName != "",
+		AutoRoute: len(agentSubnets(c.selected.Interfaces)) > 0,
+	}
 	for _, l := range c.selected.Listeners() {
 		rule.Listeners = append(rule.Listeners, ngconfig.ListenerRule{Network: l.Network, Bind: l.Address, To: l.To})
 	}

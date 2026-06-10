@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
+	"net"
 	"unsafe"
 
 	"github.com/vishvananda/netlink"
@@ -54,4 +55,23 @@ func deleteTUN(name string) {
 	if link, err := netlink.LinkByName(name); err == nil {
 		_ = netlink.LinkDel(link)
 	}
+}
+
+// addRoute installs a scope-link route for cidr via the named interface, so host
+// traffic to the agent's networks is routed into the userland stack. Routes via
+// a TUN must be scope-link (on-link, no gateway).
+func addRoute(name, cidr string) error {
+	link, err := netlink.LinkByName(name)
+	if err != nil {
+		return err
+	}
+	_, dst, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return fmt.Errorf("parse %q: %w", cidr, err)
+	}
+	return netlink.RouteReplace(&netlink.Route{
+		LinkIndex: link.Attrs().Index,
+		Dst:       dst,
+		Scope:     netlink.SCOPE_LINK,
+	})
 }

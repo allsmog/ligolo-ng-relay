@@ -168,8 +168,14 @@ autobind, with no external config framework.
 On Linux the proxy creates its own TUN interface before the gVisor stack opens
 it, using the same `ioctl` path (`IFF_TUN | IFF_NO_PI`, single queue, persisted
 via `TUNSETPERSIST`) that gVisor reopens — the v2 equivalent of the legacy CLI's
-interface-management step. Operators still assign the interface address/route
-(or a future autoroute port will).
+interface-management step.
+
+**Autoroute** closes the other big legacy gap: the proxy can install scope-link
+routes for an agent's advertised networks automatically (derived from the
+interfaces the agent sends in Hello, skipping loopback/link-local), so operators
+reach those networks without hand-running `ip route`. It is available as
+`ng-proxy -autoroute`, the console `autoroute` command, and is persisted per
+agent in autobind (`AutoRoute`).
 
 ## Multi-tunnel routing
 
@@ -244,9 +250,14 @@ together provide the legacy CLI's core UX on `node.Server`. Fully porting the
 web UI / daemon onto `node.Server` (or deleting the v1 path once parity is
 confirmed) remains the last migration step.
 
-Remaining: retiring the v1 controller/yamux path. This is gated on reaching
-feature parity for the pieces the v1 front end still owns and the v2 stack does
-not yet replace — the web UI, daemon mode, route/interface autoconfiguration
-(autoroute) and autobind, and config-file persistence. Until those land on
-`node.Server`, deleting `cmd/proxy` / `web` / `pkg/controller` would regress
-shipped functionality, so the v1 path is kept alongside v2 rather than removed.
+Remaining: retiring the v1 controller/yamux path. Daemon mode, config-file
+persistence, autobind, interface creation and **autoroute** now exist on the v2
+stack; the main piece the v1 front end still owns and v2 lacks is the **web UI**.
+Once that is ported (or consciously dropped), `cmd/proxy` / `web` /
+`pkg/controller` can be deleted as a clean cutover. Until then the v1 path is
+kept alongside v2 rather than removed.
+
+The forward data path is verified in CI by `TestForwardPathViaChannel`, which
+injects a crafted SYN into the real ligolo gVisor stack via a channel endpoint
+(no TUN/privileges) and asserts the forwarder → pool → `HandlePacket` → agent
+chain drives a dial to the target.

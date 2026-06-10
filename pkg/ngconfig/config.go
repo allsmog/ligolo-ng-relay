@@ -39,6 +39,7 @@ type ListenerRule struct {
 type Autobind struct {
 	Interface string         `json:"interface"`
 	Route     bool           `json:"route"`
+	AutoRoute bool           `json:"autoroute,omitempty"` // install routes for the agent's networks
 	Listeners []ListenerRule `json:"listeners,omitempty"`
 }
 

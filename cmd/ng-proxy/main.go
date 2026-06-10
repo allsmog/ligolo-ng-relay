@@ -30,6 +30,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -45,6 +46,7 @@ import (
 	"github.com/nicocha30/ligolo-ng/pkg/transport/muxtransport"
 	"github.com/nicocha30/ligolo-ng/pkg/transport/quictransport"
 	"github.com/nicocha30/ligolo-ng/pkg/transport/wstransport"
+	"github.com/nicocha30/ligolo-ng/pkg/wire"
 	"github.com/sirupsen/logrus"
 )
 
@@ -57,6 +59,7 @@ func main() {
 	operatorDir := flag.String("operator-config", "ligolo-operator", "directory to write the operator config bundle")
 	configPath := flag.String("config", "", "config file for stable identity + autobind (daemon mode); created if missing")
 	console := flag.Bool("console", false, "run an interactive console instead of auto-routing agents")
+	autoroute := flag.Bool("autoroute", false, "auto-install routes for each agent's advertised networks")
 	verbose := flag.Bool("v", false, "verbose logging")
 	flag.Parse()
 
@@ -131,6 +134,9 @@ func main() {
 					logrus.Errorf("auto-route %s failed (need root + TUN): %v", s.ID, err)
 				} else {
 					logrus.Infof("routing %s through %s", s.ID, ifName)
+					if *autoroute {
+						applyAutoroute(ifName, s)
+					}
 				}
 			}
 		},
@@ -189,14 +195,18 @@ func loadOrInitConfig(path, listen, psk, operatorListen, operatorDir string) *ng
 	return cfg
 }
 
-// applyAutobind restores an agent's tunnel and reverse listeners from a saved
-// rule when the agent reconnects.
+// applyAutobind restores an agent's tunnel, autoroutes and reverse listeners
+// from a saved rule when the agent reconnects.
 func applyAutobind(tun *tunnelManager, srv *node.Server, s *session.Session, rule ngconfig.Autobind) {
 	if rule.Route {
-		if ifName, err := tun.start(s, rule.Interface); err != nil {
+		ifName, err := tun.start(s, rule.Interface)
+		if err != nil {
 			logrus.Errorf("autobind route %s failed: %v", s.ID, err)
 		} else {
 			logrus.Infof("autobind: routing %s through %s", s.Name, ifName)
+			if rule.AutoRoute {
+				applyAutoroute(ifName, s)
+			}
 		}
 	}
 	for _, l := range rule.Listeners {
@@ -206,6 +216,45 @@ func applyAutobind(tun *tunnelManager, srv *node.Server, s *session.Session, rul
 			logrus.Infof("autobind: listener %s/%s -> %s on %s", l.Bind, l.Network, l.To, s.Name)
 		}
 	}
+}
+
+// applyAutoroute installs routes for the agent's advertised networks via ifName,
+// so the operator can reach those networks without manual `ip route` commands.
+func applyAutoroute(ifName string, s *session.Session) []string {
+	var added []string
+	for _, subnet := range agentSubnets(s.Interfaces) {
+		if err := addRoute(ifName, subnet); err != nil {
+			logrus.Debugf("autoroute %s via %s: %v", subnet, ifName, err)
+			continue
+		}
+		added = append(added, subnet)
+		logrus.Infof("autoroute: %s via %s", subnet, ifName)
+	}
+	return added
+}
+
+// agentSubnets derives routable network CIDRs from an agent's interface
+// addresses, skipping loopback and link-local ranges.
+func agentSubnets(ifaces []wire.NetInterface) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, iface := range ifaces {
+		for _, addr := range iface.Addresses {
+			ip, ipnet, err := net.ParseCIDR(addr)
+			if err != nil {
+				continue
+			}
+			if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+				continue
+			}
+			cidr := ipnet.String()
+			if !seen[cidr] {
+				seen[cidr] = true
+				out = append(out, cidr)
+			}
+		}
+	}
+	return out
 }
 
 // startOperatorHub provisions an operator PKI, writes an operator config bundle
