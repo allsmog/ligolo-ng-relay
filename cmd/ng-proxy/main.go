@@ -46,6 +46,7 @@ import (
 	"github.com/nicocha30/ligolo-ng/pkg/transport/muxtransport"
 	"github.com/nicocha30/ligolo-ng/pkg/transport/quictransport"
 	"github.com/nicocha30/ligolo-ng/pkg/transport/wstransport"
+	"github.com/nicocha30/ligolo-ng/pkg/webui"
 	"github.com/nicocha30/ligolo-ng/pkg/wire"
 	"github.com/sirupsen/logrus"
 )
@@ -60,6 +61,8 @@ func main() {
 	configPath := flag.String("config", "", "config file for stable identity + autobind (daemon mode); created if missing")
 	console := flag.Bool("console", false, "run an interactive console instead of auto-routing agents")
 	autoroute := flag.Bool("autoroute", false, "auto-install routes for each agent's advertised networks")
+	webListen := flag.String("web-listen", "", "web UI listen addr (host:port); empty disables it")
+	webToken := flag.String("web-token", "", "web UI access token; generated if empty")
 	verbose := flag.Bool("v", false, "verbose logging")
 	flag.Parse()
 
@@ -149,6 +152,16 @@ func main() {
 
 	if *operatorListen != "" {
 		startOperatorHub(ctx, srv, *operatorListen, *operatorDir)
+	}
+
+	if *webListen != "" {
+		web := webui.New(newWebController(srv, tun), *webToken)
+		go func() {
+			if err := web.Serve(*webListen, "", ""); err != nil {
+				logrus.Errorf("web UI: %v", err)
+			}
+		}()
+		logrus.Infof("web UI on http://%s  (token: %s)", *webListen, web.Token())
 	}
 
 	logrus.Infof("assign the tunnel an address and route, e.g.: sudo ip addr add 240.0.0.1/4 dev %s && sudo ip link set %s up", *tunName, *tunName)
