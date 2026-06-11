@@ -77,6 +77,10 @@ func StartRelayListener(listenAddr string, controlConn net.Conn) error {
 
 	// Accept downstream agent connections
 	go func() {
+		// Ensure any connection accepted but never bridged is closed when the
+		// accept loop exits (listener closed or control stream broken), so we
+		// don't leak file descriptors or goroutines.
+		defer drainPendingConns()
 		for {
 			conn, err := lis.Accept()
 			if err != nil {
@@ -120,13 +124,27 @@ func HandleRelayBridge(bridgeConn net.Conn, connectionID int32) {
 	relay.StartRelay(downstreamConn, bridgeConn)
 }
 
-// StopRelayListener stops the relay listener if one is active.
+// StopRelayListener stops the relay listener if one is active and closes any
+// downstream connections that were accepted but never bridged.
 func StopRelayListener() {
 	relayMutex.Lock()
 	defer relayMutex.Unlock()
 	if relayListener != nil {
 		relayListener.Close()
 		relayListener = nil
+		drainPendingConns()
 		logrus.Info("Relay listener stopped")
 	}
+}
+
+// drainPendingConns closes every downstream connection still waiting to be
+// bridged and clears the pending map. Safe to call multiple times.
+func drainPendingConns() {
+	relayPendingConns.Range(func(key, value any) bool {
+		if conn, ok := value.(net.Conn); ok {
+			conn.Close()
+		}
+		relayPendingConns.Delete(key)
+		return true
+	})
 }

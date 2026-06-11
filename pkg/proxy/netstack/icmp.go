@@ -26,6 +26,7 @@ import (
 	"github.com/nicocha30/gvisor-ligolo/pkg/tcpip/checksum"
 	"github.com/nicocha30/gvisor-ligolo/pkg/tcpip/header"
 	"github.com/nicocha30/gvisor-ligolo/pkg/tcpip/network/ipv4"
+	"github.com/nicocha30/gvisor-ligolo/pkg/tcpip/network/ipv6"
 	"github.com/nicocha30/gvisor-ligolo/pkg/tcpip/stack"
 	"github.com/nicocha30/gvisor-ligolo/pkg/tcpip/transport/icmp"
 	"github.com/nicocha30/gvisor-ligolo/pkg/tcpip/transport/raw"
@@ -196,54 +197,54 @@ func ProcessICMP(nstack *stack.Stack, pkt stack.PacketBufferPtr) {
 	}
 }
 
-// SendICMPPortUnreachable generates an ICMP Destination Unreachable (Type 3, Code 3)
-// packet and injects it back into the TUN interface. This is sent when a UDP connection
-// to a remote port is refused (ECONNREFUSED), allowing tools like nmap to detect closed
-// UDP ports instantly instead of waiting for a timeout.
+// SendICMPPortUnreachable generates an ICMP Destination Unreachable "port
+// unreachable" packet and injects it back into the TUN interface. This is sent
+// when a UDP connection to a remote port is refused (ECONNREFUSED), allowing
+// tools like nmap to detect closed UDP ports instantly instead of waiting for a
+// timeout. It dispatches to the IPv4 (Type 3, Code 3) or IPv6 (Type 1, Code 4)
+// path based on the address family.
 //
-// Per RFC 792, the ICMP error payload contains the original IP header + first 8 bytes
-// of the original datagram (the UDP header), which lets the scanner correlate the
-// error with its probe.
+// Per RFC 792 / RFC 4443, the ICMP error payload contains the original IP header
+// plus the first 8 bytes of the original datagram (the UDP header), which lets
+// the scanner correlate the error with its probe.
 func SendICMPPortUnreachable(nstack *stack.Stack, endpointID stack.TransportEndpointID) {
 	// The endpointID fields from the perspective of the netstack forwarder:
 	//   LocalAddress/LocalPort   = the destination (target host:port)
 	//   RemoteAddress/RemotePort = the source (scanner host:port)
 	//
 	// The ICMP error goes FROM the target back TO the scanner.
-	srcAddr := endpointID.LocalAddress
-	dstAddr := endpointID.RemoteAddress
+	target := endpointID.LocalAddress
+	scanner := endpointID.RemoteAddress
 
-	r, err := nstack.FindRoute(1, srcAddr, dstAddr, ipv4.ProtocolNumber, false)
-	if err != nil {
-		logrus.Debugf("SendICMPPortUnreachable: could not find route: %v", err)
+	if target.Len() == 16 {
+		sendICMPv6PortUnreachable(nstack, target, scanner, endpointID.LocalPort, endpointID.RemotePort)
 		return
 	}
-	defer r.Release()
+	sendICMPv4PortUnreachable(nstack, target, scanner, endpointID.LocalPort, endpointID.RemotePort)
+}
 
-	// Build the "original IP header + first 8 bytes of datagram" payload.
-	// This is what goes inside the ICMP error message per RFC 792.
-	//
-	// Original IP header (20 bytes, no options):
+// buildICMPv4PortUnreachable builds a complete, checksummed ICMPv4 Destination
+// Unreachable (Type 3, Code 3) message for a refused UDP datagram that went from
+// embSrc:embSrcPort to embDst:embDstPort. The returned bytes are the ICMP
+// message: header + embedded original IPv4 header + first 8 bytes (UDP header).
+func buildICMPv4PortUnreachable(embSrc, embDst tcpip.Address, embSrcPort, embDstPort uint16) header.ICMPv4 {
 	origIPHdr := make([]byte, header.IPv4MinimumSize)
 	ip := header.IPv4(origIPHdr)
 	ip.Encode(&header.IPv4Fields{
 		TotalLength: header.IPv4MinimumSize + header.UDPMinimumSize,
 		TTL:         64,
 		Protocol:    uint8(header.UDPProtocolNumber),
-		SrcAddr:     dstAddr, // original packet was FROM scanner
-		DstAddr:     srcAddr, // original packet was TO target
+		SrcAddr:     embSrc,
+		DstAddr:     embDst,
 	})
 	ip.SetChecksum(^ip.CalculateChecksum())
 
-	// First 8 bytes of original datagram = UDP header (src port, dst port, length, checksum)
 	origUDPHdr := make([]byte, header.UDPMinimumSize)
-	binary.BigEndian.PutUint16(origUDPHdr[0:2], endpointID.RemotePort) // original src port
-	binary.BigEndian.PutUint16(origUDPHdr[2:4], endpointID.LocalPort)  // original dst port
-	binary.BigEndian.PutUint16(origUDPHdr[4:6], header.UDPMinimumSize) // length
+	binary.BigEndian.PutUint16(origUDPHdr[0:2], embSrcPort)
+	binary.BigEndian.PutUint16(origUDPHdr[2:4], embDstPort)
+	binary.BigEndian.PutUint16(origUDPHdr[4:6], header.UDPMinimumSize)
 	// checksum left as 0 (optional for UDP in IPv4)
 
-	// Build ICMP Destination Unreachable message:
-	// [Type=3][Code=3][Checksum][Unused/0][Original IP Hdr + 8 bytes]
 	icmpLen := header.ICMPv4MinimumSize + len(origIPHdr) + len(origUDPHdr)
 	icmpHdr := make(header.ICMPv4, icmpLen)
 	icmpHdr.SetType(header.ICMPv4DstUnreachable)
@@ -252,11 +253,58 @@ func SendICMPPortUnreachable(nstack *stack.Stack, endpointID stack.TransportEndp
 	copy(icmpHdr[header.ICMPv4MinimumSize+len(origIPHdr):], origUDPHdr)
 	icmpHdr.SetChecksum(0)
 	icmpHdr.SetChecksum(^checksum.Checksum(icmpHdr, 0))
+	return icmpHdr
+}
 
-	// Build outer IP header for the ICMP error packet
+// buildICMPv6PortUnreachable builds a complete, checksummed ICMPv6 Destination
+// Unreachable (Type 1, Code 4) message. The ICMPv6 checksum covers a pseudo-header
+// derived from the outer source/destination addresses, so those are required.
+func buildICMPv6PortUnreachable(outerSrc, outerDst, embSrc, embDst tcpip.Address, embSrcPort, embDstPort uint16) header.ICMPv6 {
+	origIPHdr := make([]byte, header.IPv6MinimumSize)
+	ip := header.IPv6(origIPHdr)
+	ip.Encode(&header.IPv6Fields{
+		PayloadLength:     header.UDPMinimumSize,
+		TransportProtocol: header.UDPProtocolNumber,
+		HopLimit:          64,
+		SrcAddr:           embSrc,
+		DstAddr:           embDst,
+	})
+
+	origUDPHdr := make([]byte, header.UDPMinimumSize)
+	binary.BigEndian.PutUint16(origUDPHdr[0:2], embSrcPort)
+	binary.BigEndian.PutUint16(origUDPHdr[2:4], embDstPort)
+	binary.BigEndian.PutUint16(origUDPHdr[4:6], header.UDPMinimumSize)
+
+	// [Type=1][Code=4][Checksum][Unused 4 bytes][Original IPv6 Hdr + 8 bytes]
+	icmpLen := header.ICMPv6MinimumSize + len(origIPHdr) + len(origUDPHdr)
+	icmpHdr := make(header.ICMPv6, icmpLen)
+	icmpHdr.SetType(header.ICMPv6DstUnreachable)
+	icmpHdr.SetCode(header.ICMPv6PortUnreachable)
+	copy(icmpHdr[header.ICMPv6MinimumSize:], origIPHdr)
+	copy(icmpHdr[header.ICMPv6MinimumSize+len(origIPHdr):], origUDPHdr)
+	icmpHdr.SetChecksum(0)
+	icmpHdr.SetChecksum(header.ICMPv6Checksum(header.ICMPv6ChecksumParams{
+		Header: icmpHdr,
+		Src:    outerSrc,
+		Dst:    outerDst,
+	}))
+	return icmpHdr
+}
+
+func sendICMPv4PortUnreachable(nstack *stack.Stack, target, scanner tcpip.Address, targetPort, scannerPort uint16) {
+	r, err := nstack.FindRoute(1, target, scanner, ipv4.ProtocolNumber, false)
+	if err != nil {
+		logrus.Debugf("SendICMPPortUnreachable: could not find route: %v", err)
+		return
+	}
+	defer r.Release()
+
+	// Embedded original datagram travelled scanner -> target.
+	icmpHdr := buildICMPv4PortUnreachable(scanner, target, scannerPort, targetPort)
+
 	outerIPHdr := make(header.IPv4, header.IPv4MinimumSize)
 	outerIPHdr.Encode(&header.IPv4Fields{
-		TotalLength: uint16(header.IPv4MinimumSize + icmpLen),
+		TotalLength: uint16(header.IPv4MinimumSize + len(icmpHdr)),
 		TTL:         r.DefaultTTL(),
 		Protocol:    uint8(header.ICMPv4ProtocolNumber),
 		SrcAddr:     r.LocalAddress(),
@@ -264,7 +312,6 @@ func SendICMPPortUnreachable(nstack *stack.Stack, endpointID stack.TransportEndp
 	})
 	outerIPHdr.SetChecksum(^outerIPHdr.CalculateChecksum())
 
-	// Assemble full packet and inject into the network stack
 	pktBuf := buffer.MakeWithData(outerIPHdr)
 	pktBuf.Append(buffer.NewViewWithData(icmpHdr))
 	replyPkt := stack.NewPacketBuffer(stack.PacketBufferOptions{
@@ -278,6 +325,44 @@ func SendICMPPortUnreachable(nstack *stack.Stack, endpointID stack.TransportEndp
 		return
 	}
 
-	logrus.Debugf("Sent ICMP Port Unreachable for %s:%d -> %s:%d",
-		dstAddr, endpointID.RemotePort, srcAddr, endpointID.LocalPort)
+	logrus.Debugf("Sent ICMPv4 Port Unreachable for %s:%d -> %s:%d",
+		scanner, scannerPort, target, targetPort)
+}
+
+func sendICMPv6PortUnreachable(nstack *stack.Stack, target, scanner tcpip.Address, targetPort, scannerPort uint16) {
+	r, err := nstack.FindRoute(1, target, scanner, ipv6.ProtocolNumber, false)
+	if err != nil {
+		logrus.Debugf("SendICMPPortUnreachable: could not find route: %v", err)
+		return
+	}
+	defer r.Release()
+
+	// Embedded original datagram travelled scanner -> target. The ICMPv6 checksum
+	// pseudo-header uses the outer route addresses.
+	icmpHdr := buildICMPv6PortUnreachable(r.LocalAddress(), r.RemoteAddress(), scanner, target, scannerPort, targetPort)
+
+	outerIPHdr := make(header.IPv6, header.IPv6MinimumSize)
+	outerIPHdr.Encode(&header.IPv6Fields{
+		PayloadLength:     uint16(len(icmpHdr)),
+		TransportProtocol: header.ICMPv6ProtocolNumber,
+		HopLimit:          r.DefaultTTL(),
+		SrcAddr:           r.LocalAddress(),
+		DstAddr:           r.RemoteAddress(),
+	})
+
+	pktBuf := buffer.MakeWithData(outerIPHdr)
+	pktBuf.Append(buffer.NewViewWithData(icmpHdr))
+	replyPkt := stack.NewPacketBuffer(stack.PacketBufferOptions{
+		ReserveHeaderBytes: int(r.MaxHeaderLength()),
+		Payload:            pktBuf,
+	})
+	replyPkt.TransportProtocolNumber = header.ICMPv6ProtocolNumber
+
+	if err := r.WriteHeaderIncludedPacket(replyPkt); err != nil {
+		logrus.Debugf("SendICMPPortUnreachable: write error: %v", err)
+		return
+	}
+
+	logrus.Debugf("Sent ICMPv6 Port Unreachable for %s:%d -> %s:%d",
+		scanner, scannerPort, target, targetPort)
 }

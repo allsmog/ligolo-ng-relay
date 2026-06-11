@@ -25,6 +25,7 @@ import (
 	"github.com/hashicorp/yamux"
 	"github.com/nicocha30/ligolo-ng/pkg/protocol"
 	"github.com/nicocha30/ligolo-ng/pkg/proxy"
+	"github.com/sirupsen/logrus"
 )
 
 type LigoloAgent struct {
@@ -185,14 +186,14 @@ func (la *LigoloAgent) HandleRelayNotifications(chainMgr *proxy.ChainManager, re
 
 		// Check depth limit
 		if chainMgr.WouldExceedMaxDepth(la.SessionID) {
-			fmt.Printf("WARNING: Maximum chain depth reached, rejecting downstream agent from %s\n", notification.RemoteAddr)
+			logrus.Warnf("Relay: maximum chain depth reached, rejecting downstream agent from %s", notification.RemoteAddr)
 			continue
 		}
 
 		// Open a new yamux stream to the relay agent for bridging
 		bridgeStream, err := la.Session.Open()
 		if err != nil {
-			fmt.Printf("ERROR: Could not open bridge stream: %v\n", err)
+			logrus.Errorf("Relay: could not open bridge stream: %v", err)
 			continue
 		}
 
@@ -202,7 +203,7 @@ func (la *LigoloAgent) HandleRelayNotifications(chainMgr *proxy.ChainManager, re
 			ConnectionID: notification.ConnectionID,
 		}); err != nil {
 			bridgeStream.Close()
-			fmt.Printf("ERROR: Could not send bridge request: %v\n", err)
+			logrus.Errorf("Relay: could not send bridge request: %v", err)
 			continue
 		}
 
@@ -217,7 +218,7 @@ func (la *LigoloAgent) HandleRelayNotifications(chainMgr *proxy.ChainManager, re
 		downstreamSession, err := yamux.Client(bridgeStream, yamuxConfig)
 		if err != nil {
 			bridgeStream.Close()
-			fmt.Printf("ERROR: Could not create yamux session for downstream agent: %v\n", err)
+			logrus.Errorf("Relay: could not create yamux session for downstream agent: %v", err)
 			continue
 		}
 
@@ -225,24 +226,24 @@ func (la *LigoloAgent) HandleRelayNotifications(chainMgr *proxy.ChainManager, re
 		downstreamAgent, err := NewAgent(downstreamSession)
 		if err != nil {
 			downstreamSession.Close()
-			fmt.Printf("ERROR: Could not register downstream agent: %v\n", err)
+			logrus.Errorf("Relay: could not register downstream agent: %v", err)
 			continue
 		}
 
 		// Check for circular chains
 		if chainMgr.IsCircular(la.SessionID, downstreamAgent.SessionID) {
 			downstreamSession.Close()
-			fmt.Printf("WARNING: Circular chain detected, rejecting agent %s\n", downstreamAgent.SessionID)
+			logrus.Warnf("Relay: circular chain detected, rejecting agent %s", downstreamAgent.SessionID)
 			continue
 		}
 
 		downstreamAgent.ParentAgentID = la.SessionID
 		chainMgr.AddLink(la.SessionID, downstreamAgent.SessionID)
 
-		fmt.Printf("INFO: Downstream agent joined via %s: %s (%s)\n", la.Name, downstreamAgent.Name, notification.RemoteAddr)
+		logrus.Infof("Downstream agent joined via %s: %s (%s)", la.Name, downstreamAgent.Name, notification.RemoteAddr)
 
 		if err := registerFunc(downstreamAgent); err != nil {
-			fmt.Printf("ERROR: Could not register downstream agent: %v\n", err)
+			logrus.Errorf("Relay: could not register downstream agent: %v", err)
 		}
 	}
 }
