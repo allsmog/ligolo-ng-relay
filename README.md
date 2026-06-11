@@ -1,15 +1,20 @@
-# Ligolo-ng : Tunneling like a VPN
+# Warren : Tunneling like a VPN
 
 ![Ligolo Logo](doc/logo.png)
 
-An advanced, yet simple, tunneling tool that uses TUN interfaces.
+An advanced, yet simple, tunneling tool that uses TUN interfaces — extended for
+**multi-hop pivoting** through deeply segmented networks.
 
 [![GPLv3](https://img.shields.io/badge/License-GPLv3-brightgreen.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Go Report](https://goreportcard.com/badge/github.com/nicocha30/ligolo-ng)](https://goreportcard.com/report/github.com/nicocha30/ligolo-ng)
-[![GitHub Sponsors](https://img.shields.io/github/sponsors/nicocha30)](https://github.com/sponsors/nicocha30)
-![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/nicocha30/ligolo-ng/total)
 
-[📑 Ligolo-ng Documentation (Setup/Quickstart)](https://docs.ligolo.ng/)
+> **This is a fork of [Ligolo-ng](https://github.com/nicocha30/ligolo-ng).** Warren
+> adds multi-hop agent chaining (relay mode), so an agent can act as a lightweight
+> TLS relay for downstream agents that cannot reach the proxy directly, plus ICMP
+> Port Unreachable responses that make UDP scans return instantly instead of timing
+> out. See **[ENHANCEMENTS.md](ENHANCEMENTS.md)** for details and usage.
+>
+> Setup, quickstart, and core usage are unchanged from upstream — the upstream
+> [Ligolo-ng Documentation](https://docs.ligolo.ng/) still applies.
 
 > [!TIP]
 > Ligolo-ng 0.8 added a lot of new features, including:
@@ -63,6 +68,8 @@ tunnels from a reverse TCP/TLS connection using a **tun interface** (without the
 - Reverse/Bind Connection
 - Automatic tunnel/listeners recovery (in case of network issues)
 - Websocket support
+- **Multi-hop agent chaining (relay mode)** for pivoting through segmented networks (see [ENHANCEMENTS.md](ENHANCEMENTS.md))
+- **ICMP Port Unreachable** responses for fast UDP port scanning
 
 ## Demo
 
@@ -98,7 +105,7 @@ However, on your *relay/proxy* server, you need to be able to create a *tun* int
 
 * TCP
 * UDP
-* ICMP (echo requests)
+* ICMP (echo requests, and Port Unreachable errors for UDP scan acceleration)
 
 ## Performance
 
@@ -133,11 +140,14 @@ When using *nmap*, you should use `--unprivileged` or `-PE` to avoid false posit
 
 ## Todo
 
-- Implement other ICMP error messages (this will speed up UDP scans) ;
+- ~~Implement other ICMP error messages (this will speed up UDP scans)~~ (done — ICMP Port Unreachable) ;
+- ~~Multi-hop agent chaining~~ (done — relay mode) ;
 - Do not *RST* when receiving an *ACK* from an invalid TCP connection (nmap will report the host as up) ;
 - Add mTLS support.
 
 ## Credits
+
+Warren is a fork of [Ligolo-ng](https://github.com/nicocha30/ligolo-ng) by Nicolas Chatelain. All credit for the original tool goes to the upstream authors:
 
 - Nicolas Chatelain <nicolas -at- chatelain.me>
 - Jeremie Bedjai (Ligolo-ng-Web)
