@@ -31,12 +31,12 @@ import (
 	"os"
 	"time"
 
-	"github.com/nicocha30/ligolo-ng/pkg/tlsutils"
-	"github.com/nicocha30/ligolo-ng/pkg/utils"
+	"github.com/allsmog/ligolo-ng-relay/pkg/tlsutils"
+	"github.com/allsmog/ligolo-ng-relay/pkg/utils"
 
+	"github.com/allsmog/ligolo-ng-relay/pkg/agent"
 	"github.com/coder/websocket"
 	"github.com/hashicorp/yamux"
-	"github.com/nicocha30/ligolo-ng/pkg/agent"
 	"github.com/sirupsen/logrus"
 	goproxy "golang.org/x/net/proxy"
 )
@@ -59,14 +59,15 @@ func main() {
 	var reconnectTimeout = flag.Int("reconnect-timeout", 300, "total reconnection timeout in seconds (default: 300 = 5 minutes)")
 	var socksProxy = flag.String("proxy", "", "proxy URL address (http://admin:secret@127.0.0.1:8080) or socks://admin:secret@127.0.0.1:8080")
 	var serverAddr = flag.String("connect", "", "connect to proxy (domain:port)")
+	var relayToken = flag.String("relay-token", os.Getenv("LIGOLO_RELAY_TOKEN"), "relay authentication token (or LIGOLO_RELAY_TOKEN)")
 	var bindAddr = flag.String("bind", "", "bind to ip:port")
 	var userAgent = flag.String("ua", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36", "HTTP User-Agent")
 	var versionFlag = flag.Bool("version", false, "show the current version")
 
 	flag.Usage = func() {
-		fmt.Printf("Ligolo-ng %s / %s / %s\n", version, commit, date)
-		fmt.Println("Made in France with love by @Nicocha30!")
-		fmt.Println("https://github.com/nicocha30/ligolo-ng")
+		fmt.Printf("Ligolo-ng Relay %s / %s / %s\n", version, commit, date)
+		fmt.Println("Maintained fork of Ligolo-ng by @Nicocha30")
+		fmt.Println("https://github.com/allsmog/ligolo-ng-relay")
 		fmt.Printf("\nUsage of %s:\n", os.Args[0])
 		flag.PrintDefaults()
 	}
@@ -74,7 +75,7 @@ func main() {
 	flag.Parse()
 
 	if *versionFlag {
-		fmt.Printf("Ligolo-ng %s / %s / %s\n", version, commit, date)
+		fmt.Printf("Ligolo-ng Relay %s / %s / %s\n", version, commit, date)
 		return
 	}
 
@@ -163,7 +164,16 @@ func main() {
 					}
 				}
 				tlsConn := tls.Client(conn, &tlsConfig)
-				connSuccess, err = connect(tlsConn)
+				if *relayToken != "" {
+					if authErr := agent.WriteRelayAuth(tlsConn, *relayToken); authErr != nil {
+						conn.Close()
+						err = fmt.Errorf("relay auth failed: %v", authErr)
+					} else {
+						connSuccess, err = connect(tlsConn)
+					}
+				} else {
+					connSuccess, err = connect(tlsConn)
+				}
 			}
 		}
 

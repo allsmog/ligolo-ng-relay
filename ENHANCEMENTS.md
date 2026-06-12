@@ -1,10 +1,24 @@
-# Warren Enhancements
+# Ligolo-ng Relay Enhancements
 
-Warren is a fork of [Ligolo-ng](https://github.com/nicocha30/ligolo-ng). It adds
-multi-hop agent chaining (relay mode) and ICMP Port Unreachable responses on top of
-upstream Ligolo-ng. Everything else — setup, tunneling, listeners, the web UI — works
+Ligolo-ng Relay is a maintained fork of
+[Ligolo-ng](https://github.com/nicocha30/ligolo-ng). It adds multi-hop agent
+chaining (relay mode) and ICMP Port Unreachable responses on top of upstream
+Ligolo-ng. Everything else — setup, tunneling, listeners, the web UI — works
 exactly as in upstream, so the [Ligolo-ng documentation](https://docs.ligolo.ng/)
 still applies.
+
+Operational docs:
+
+- [FORK-DELTA.md](FORK-DELTA.md) tracks the fork's upstream base and exact delta.
+- [doc/RELAY_API.md](doc/RELAY_API.md) documents relay automation and structured
+  chain status, including the `relayctl` helper.
+- [test/relay/README.md](test/relay/README.md) explains the Docker relay lab.
+- [doc/UDP_SCAN_BENCHMARK.md](doc/UDP_SCAN_BENCHMARK.md) covers scan speed and
+  classification benchmarks.
+- [doc/RESTRICTIVE_EGRESS.md](doc/RESTRICTIVE_EGRESS.md) documents WebSocket,
+  HTTP proxy, SOCKS, and relay-chain usage for constrained networks.
+- [doc/PERFORMANCE.md](doc/PERFORMANCE.md) gives repeatable relay-chain path RTT
+  and throughput checks.
 
 ---
 
@@ -28,15 +42,15 @@ full chain.
 1. Select an agent and start relay mode:
 
    ```
-   ligolo-ng » session             # select Agent A
-   [Agent: user@DMZ] » relay_start --addr 0.0.0.0:11602
+   ligolo-ng-relay » session       # select Agent A
+   [Agent: user@DMZ] » relay_start --addr <agent-interface-ip>:11602
    ```
 
 2. On the downstream host (reachable from Agent A but not the proxy), connect
-   through the relay:
+   through the relay using the command printed by `relay_start`:
 
    ```
-   ./agent -connect <AgentA_IP>:11602 -ignore-cert
+   ./agent -connect <AgentA_IP>:11602 -accept-fingerprint <fingerprint> -relay-token <relay-token>
    ```
 
 3. Agent B auto-registers on the proxy and can be used like any other agent.
@@ -48,23 +62,35 @@ full chain.
 | `relay_start --addr <ip:port>` | Start a relay listener on the current agent |
 | `relay_stop` | Stop the relay on the current agent |
 | `chain_list` | Display the relay chain topology |
+| `chain_list --json` | Display structured chain status for automation |
+| `chain_routes` | Display route candidates across direct and relayed agents |
+| `chain_autoroute` | Configure per-agent routes/interfaces across the chain |
 
 ### REST API
 
 | Method & path | Description |
 | --- | --- |
-| `POST /api/v1/relay/:id` | Start relay (body: `{"ListenAddr": "0.0.0.0:11602"}`) |
+| `POST /api/v1/relay/:id` | Start relay (body: `{"ListenAddr": "<agent-interface-ip>:11602"}`) |
 | `DELETE /api/v1/relay/:id` | Stop relay |
-| `GET /api/v1/chains` | Get the chain topology |
+| `GET /api/v1/chains` | Get human and structured chain topology |
+| `GET /api/v1/chain_routes` | Get route candidates across the chain |
+| `POST /api/v1/chain_autoroute` | Configure per-agent routes/interfaces |
 
 ### Notes & limits
 
-- Maximum chain depth is **5 hops**; circular chains are detected and rejected.
+- A relay branch can contain up to **5 agents**: one direct root agent plus four
+  downstream relay levels. Circular chains are detected and rejected.
 - The `InfoReplyPacket` now carries a `RelayCapable` field so the proxy knows which
   agents can relay.
 - Session recovery is supported for both relay agents and downstream agents.
 - A `LIGOLO_SESSION_ID` environment variable allows running multiple agents on a
   single host (useful for testing chains locally).
+- `relay_start` and the REST API return a fingerprint-pinned downstream connect
+  command using `-accept-fingerprint` plus a proxy-minted `-relay-token`.
+- Stopping a relay now closes downstream sessions registered through that relay
+  and prunes their chain links.
+- Structured chain status reports online/offline state and cached proxy-to-agent
+  `path_rtt_ms` when the health probe succeeds.
 
 **Implementation:** new protocol messages (`RelayRequest`, `RelayResponse`,
 `RelayNewConnection`, `RelayBridgeRequest`), an agent-side relay listener with
@@ -86,6 +112,10 @@ triggered it.
 
 Previously, UDP failures silently disappeared because `Terminate()` was a no-op for
 UDP connections — leaving scanners to time out on every closed port.
+
+ICMP Port Unreachable responses are rate-limited per target/scanner pair. The
+default interval is `1s`; tune it with `LIGOLO_ICMP_UNREACHABLE_INTERVAL`
+(`250ms`, `1s`, `0` to disable limiting).
 
 **Implementation:** `pkg/proxy/netstack/icmp.go` (new) and a small change in
 `pkg/proxy/netstack/handlers.go`.

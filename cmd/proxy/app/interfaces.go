@@ -21,17 +21,16 @@ package app
 import (
 	"errors"
 	"fmt"
-	"net"
 	"sort"
 	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
+	"github.com/allsmog/ligolo-ng-relay/cmd/proxy/config"
+	"github.com/allsmog/ligolo-ng-relay/pkg/proxy/netinfo"
+	"github.com/allsmog/ligolo-ng-relay/pkg/utils/codenames"
 	"github.com/desertbit/grumble"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
-	"github.com/nicocha30/ligolo-ng/cmd/proxy/config"
-	"github.com/nicocha30/ligolo-ng/pkg/proxy/netinfo"
-	"github.com/nicocha30/ligolo-ng/pkg/utils/codenames"
 	"github.com/sirupsen/logrus"
 )
 
@@ -298,33 +297,28 @@ func init() {
 		Name:      "autoroute",
 		Help:      "Setup everything for you (interfaces, routes & tunnel)",
 		HelpGroup: "Tunneling",
-		Usage:     "autoroute [--interface name]",
+		Usage:     "autoroute [--agent id] [--interface name]",
 		Flags: func(f *grumble.Flags) {
+			f.IntL("agent", 0, "Agent ID to autoroute (defaults to the current session)")
 			f.BoolL("with-ipv6", false, "Include IPv6 addresses")
 			f.StringL("interface", "", "Custom interface name (if provided, skips interface creation prompt)")
 		},
 		Run: func(c *grumble.Context) error {
-			if _, ok := AgentList[CurrentAgentID]; !ok {
+			agentID := c.Flags.Int("agent")
+			if agentID == 0 {
+				agentID = CurrentAgentID
+			}
+			if _, ok := AgentList[agentID]; !ok {
 				return ErrInvalidAgent
 			}
-			CurrentAgent := AgentList[CurrentAgentID]
+			CurrentAgent := AgentList[agentID]
 			// Note: Network information is not refreshed when calling this command
 			if CurrentAgent.Session == nil {
 				return ErrInvalidAgent
 			}
-			var possibleRoutes []string
-			for _, ifaceInfo := range CurrentAgent.Network {
-				for _, address := range ifaceInfo.Addresses {
-					ip, _, err := net.ParseCIDR(address)
-					if err != nil {
-						continue
-					}
-					if !ip.IsLoopback() {
-						if ip.To4() != nil || c.Flags.Bool("with-ipv6") {
-							possibleRoutes = append(possibleRoutes, address)
-						}
-					}
-				}
+			possibleRoutes := candidateRoutes(CurrentAgent, c.Flags.Bool("with-ipv6"))
+			if len(possibleRoutes) == 0 {
+				return errors.New("no routes available for selected agent")
 			}
 			routePrompt := &survey.MultiSelect{
 				Message: "Select routes to add:",
@@ -514,6 +508,59 @@ func init() {
 				}
 			} else {
 				logrus.Infof("You can start the tunnel with: start --tun %s", selectedIface)
+			}
+			return nil
+		},
+	})
+
+	App.AddCommand(&grumble.Command{
+		Name:      "chain_routes",
+		Help:      "Show route candidates across all online agents",
+		Usage:     "chain_routes [--with-ipv6] [--interface-prefix prefix]",
+		HelpGroup: "Relay",
+		Flags: func(f *grumble.Flags) {
+			f.BoolL("with-ipv6", false, "Include IPv6 addresses")
+			f.StringL("interface-prefix", "ligolo", "Interface name prefix used for suggested chain autoroutes")
+		},
+		Run: func(c *grumble.Context) error {
+			routes := chainRouteInfos(c.Flags.Bool("with-ipv6"), c.Flags.String("interface-prefix"))
+			if len(routes) == 0 {
+				return errors.New("no route candidates available")
+			}
+
+			t := table.NewWriter()
+			t.SetStyle(table.StyleLight)
+			t.SetTitle("Chain route candidates")
+			t.AppendHeader(table.Row{"Agent ID", "Agent", "Hop", "Via", "Interface", "Route"})
+			for _, route := range routes {
+				via := "direct"
+				if route.ParentSessionID != "" {
+					via = route.ParentSessionID
+				}
+				t.AppendRow(table.Row{route.AgentID, route.Name, route.HopDepth, via, route.Interface, route.Route})
+			}
+			App.Println(t.Render())
+			return nil
+		},
+	})
+
+	App.AddCommand(&grumble.Command{
+		Name:      "chain_autoroute",
+		Help:      "Configure per-agent interfaces and routes across the relay chain",
+		Usage:     "chain_autoroute [--interface-prefix ligolo] [--with-ipv6] [--start]",
+		HelpGroup: "Relay",
+		Flags: func(f *grumble.Flags) {
+			f.BoolL("with-ipv6", false, "Include IPv6 addresses")
+			f.StringL("interface-prefix", "ligolo", "Interface name prefix for generated interface configs")
+			f.BoolL("start", false, "Start tunnels after configuring routes")
+		},
+		Run: func(c *grumble.Context) error {
+			routes, err := configureChainAutoroutes(c.Flags.Bool("with-ipv6"), c.Flags.String("interface-prefix"), c.Flags.Bool("start"))
+			if err != nil {
+				return err
+			}
+			for _, route := range routes {
+				logrus.Infof("Configured %s on %s for agent %d (%s)", route.Route, route.Interface, route.AgentID, route.Name)
 			}
 			return nil
 		},

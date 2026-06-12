@@ -18,10 +18,12 @@ package proxy
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 )
 
-// MaxChainDepth is the maximum number of hops allowed in a relay chain.
+// MaxChainDepth is the maximum number of agents allowed in a relay chain branch,
+// including the direct root agent.
 const MaxChainDepth = 5
 
 // ChainManager tracks the relay topology between agents.
@@ -48,7 +50,22 @@ func (cm *ChainManager) AddLink(relaySessionID, downstreamSessionID string) {
 func (cm *ChainManager) RemoveAgent(sessionID string) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	delete(cm.links, sessionID)
+	removed := map[string]bool{sessionID: true}
+	for {
+		changed := false
+		for child, parent := range cm.links {
+			if removed[child] || removed[parent] {
+				delete(cm.links, child)
+				if !removed[child] {
+					removed[child] = true
+					changed = true
+				}
+			}
+		}
+		if !changed {
+			break
+		}
+	}
 }
 
 // GetParentSessionID returns the relay agent's SessionID for a downstream agent,
@@ -152,39 +169,108 @@ func (cm *ChainManager) GetDownstreamSessionIDs(relaySessionID string) []string 
 	return downstream
 }
 
+// GetDescendantSessionIDs returns every downstream SessionID reachable through
+// the given relay, including nested downstream agents.
+func (cm *ChainManager) GetDescendantSessionIDs(relaySessionID string) []string {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	var descendants []string
+	var walk func(parent string)
+	walk = func(parent string) {
+		for child, linkParent := range cm.links {
+			if linkParent == parent {
+				descendants = append(descendants, child)
+				walk(child)
+			}
+		}
+	}
+	walk(relaySessionID)
+	sort.Strings(descendants)
+	return descendants
+}
+
 // AgentInfo is a minimal interface for rendering the chain tree.
 type AgentInfo struct {
-	Name        string
-	SessionID   string
-	RelayActive bool
-	Alive       bool
+	AgentID         int
+	Name            string
+	SessionID       string
+	RemoteAddr      string
+	RelayActive     bool
+	RelayListenAddr string
+	Alive           bool
+	PathRTTMS       *int64
+	Running         bool
+	ParentSessionID string
+}
+
+type ChainNode struct {
+	AgentID         int         `json:"agent_id"`
+	Name            string      `json:"name"`
+	SessionID       string      `json:"session_id"`
+	RemoteAddr      string      `json:"remote_addr"`
+	ParentSessionID string      `json:"parent_session_id"`
+	HopDepth        int         `json:"hop_depth"`
+	Alive           bool        `json:"alive"`
+	State           string      `json:"state"`
+	PathRTTMS       *int64      `json:"path_rtt_ms,omitempty"`
+	TunnelRunning   bool        `json:"tunnel_running"`
+	RelayActive     bool        `json:"relay_active"`
+	RelayListenAddr string      `json:"relay_listen_addr"`
+	DownstreamCount int         `json:"downstream_count"`
+	Children        []ChainNode `json:"children,omitempty"`
+}
+
+type ChainSnapshot struct {
+	Topology string      `json:"topology"`
+	MaxDepth int         `json:"max_depth"`
+	Agents   []ChainNode `json:"agents"`
 }
 
 // RenderTree returns a string representation of the chain topology tree.
 func (cm *ChainManager) RenderTree(agents []AgentInfo) string {
+	return cm.Snapshot(agents).Topology
+}
+
+func (cm *ChainManager) Snapshot(agents []AgentInfo) ChainSnapshot {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
-	// Find root agents (directly connected)
 	var roots []AgentInfo
 	agentMap := make(map[string]AgentInfo)
 	for _, a := range agents {
+		if parent, ok := cm.links[a.SessionID]; ok {
+			a.ParentSessionID = parent
+		}
 		agentMap[a.SessionID] = a
 		if _, hasParent := cm.links[a.SessionID]; !hasParent {
 			roots = append(roots, a)
 		}
 	}
+	sort.Slice(roots, func(i, j int) bool {
+		return roots[i].AgentID < roots[j].AgentID
+	})
 
+	var topology string
 	if len(roots) == 0 {
-		return "No agents connected."
+		topology = "No agents connected."
+	} else {
+		topology = "Chain topology:\n  Proxy\n"
+		for i, root := range roots {
+			isLast := i == len(roots)-1
+			topology += cm.renderNode(root, agentMap, "  ", isLast)
+		}
 	}
 
-	result := "Chain topology:\n  Proxy\n"
-	for i, root := range roots {
-		isLast := i == len(roots)-1
-		result += cm.renderNode(root, agentMap, "  ", isLast)
+	nodes := make([]ChainNode, 0, len(roots))
+	for _, root := range roots {
+		nodes = append(nodes, cm.buildNode(root, agentMap))
 	}
-	return result
+	return ChainSnapshot{
+		Topology: topology,
+		MaxDepth: MaxChainDepth,
+		Agents:   nodes,
+	}
 }
 
 func (cm *ChainManager) renderNode(agent AgentInfo, agentMap map[string]AgentInfo, prefix string, isLast bool) string {
@@ -214,8 +300,12 @@ func (cm *ChainManager) renderNode(agent AgentInfo, agentMap map[string]AgentInf
 	if agent.RelayActive {
 		relayInfo = " (relay: active)"
 	}
+	aliveInfo := " [offline]"
+	if agent.Alive {
+		aliveInfo = " [online]"
+	}
 
-	result := fmt.Sprintf("%s%s%s %s%s\n", prefix, connector, agent.Name, status, relayInfo)
+	result := fmt.Sprintf("%s%s%s %s%s%s\n", prefix, connector, agent.Name, status, aliveInfo, relayInfo)
 
 	// Find children
 	var children []AgentInfo
@@ -226,6 +316,9 @@ func (cm *ChainManager) renderNode(agent AgentInfo, agentMap map[string]AgentInf
 			}
 		}
 	}
+	sort.Slice(children, func(i, j int) bool {
+		return children[i].AgentID < children[j].AgentID
+	})
 
 	for i, child := range children {
 		isLastChild := i == len(children)-1
@@ -233,4 +326,62 @@ func (cm *ChainManager) renderNode(agent AgentInfo, agentMap map[string]AgentInf
 	}
 
 	return result
+}
+
+func (cm *ChainManager) buildNode(agent AgentInfo, agentMap map[string]AgentInfo) ChainNode {
+	state := "offline"
+	if agent.Alive {
+		state = "online"
+	}
+	children := cm.childrenFor(agent.SessionID, agentMap)
+	node := ChainNode{
+		AgentID:         agent.AgentID,
+		Name:            agent.Name,
+		SessionID:       agent.SessionID,
+		RemoteAddr:      agent.RemoteAddr,
+		ParentSessionID: agent.ParentSessionID,
+		HopDepth:        cm.depthLocked(agent.SessionID),
+		Alive:           agent.Alive,
+		State:           state,
+		PathRTTMS:       agent.PathRTTMS,
+		TunnelRunning:   agent.Running,
+		RelayActive:     agent.RelayActive,
+		RelayListenAddr: agent.RelayListenAddr,
+		DownstreamCount: len(children),
+	}
+	for _, child := range children {
+		node.Children = append(node.Children, cm.buildNode(child, agentMap))
+	}
+	return node
+}
+
+func (cm *ChainManager) childrenFor(sessionID string, agentMap map[string]AgentInfo) []AgentInfo {
+	var children []AgentInfo
+	for child, parent := range cm.links {
+		if parent == sessionID {
+			if a, ok := agentMap[child]; ok {
+				a.ParentSessionID = parent
+				children = append(children, a)
+			}
+		}
+	}
+	sort.Slice(children, func(i, j int) bool {
+		return children[i].AgentID < children[j].AgentID
+	})
+	return children
+}
+
+func (cm *ChainManager) depthLocked(sessionID string) int {
+	depth := 0
+	current := sessionID
+	visited := make(map[string]bool)
+	for {
+		parent, ok := cm.links[current]
+		if !ok || visited[current] {
+			return depth
+		}
+		visited[current] = true
+		depth++
+		current = parent
+	}
 }

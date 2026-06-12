@@ -6,6 +6,7 @@ package netstack
 import (
 	"encoding/binary"
 	"testing"
+	"time"
 
 	"github.com/nicocha30/gvisor-ligolo/pkg/tcpip"
 	"github.com/nicocha30/gvisor-ligolo/pkg/tcpip/checksum"
@@ -50,6 +51,34 @@ func TestBuildICMPv4PortUnreachable(t *testing.T) {
 	}
 	if dp := binary.BigEndian.Uint16(udp[2:4]); dp != targetPort {
 		t.Errorf("embedded UDP dst port = %d, want %d", dp, targetPort)
+	}
+}
+
+func TestICMPRateLimiter(t *testing.T) {
+	limiter := newICMPRateLimiter(time.Second)
+	current := time.Unix(100, 0)
+	limiter.now = func() time.Time { return current }
+
+	if !limiter.allow("target>scanner") {
+		t.Fatal("first packet should be allowed")
+	}
+	if limiter.allow("target>scanner") {
+		t.Fatal("second packet inside interval should be rate-limited")
+	}
+	if !limiter.allow("other-target>scanner") {
+		t.Fatal("separate flow should be allowed")
+	}
+
+	current = current.Add(time.Second)
+	if !limiter.allow("target>scanner") {
+		t.Fatal("packet after interval should be allowed")
+	}
+}
+
+func TestICMPRateLimiterDisabled(t *testing.T) {
+	limiter := newICMPRateLimiter(0)
+	if !limiter.allow("target>scanner") || !limiter.allow("target>scanner") {
+		t.Fatal("disabled limiter should allow every packet")
 	}
 }
 

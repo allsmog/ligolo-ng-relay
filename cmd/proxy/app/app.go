@@ -22,25 +22,27 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/nicocha30/ligolo-ng/cmd/proxy/config"
-	"github.com/nicocha30/ligolo-ng/pkg/proxy/netinfo"
+	"github.com/allsmog/ligolo-ng-relay/cmd/proxy/config"
+	"github.com/allsmog/ligolo-ng-relay/pkg/proxy/netinfo"
 	"net"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/AlecAivazis/survey/v2"
+	"github.com/allsmog/ligolo-ng-relay/pkg/controller"
+	"github.com/allsmog/ligolo-ng-relay/pkg/proxy"
+	"github.com/allsmog/ligolo-ng-relay/pkg/proxy/netstack"
 	"github.com/desertbit/grumble"
 	"github.com/hashicorp/yamux"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
-	"github.com/nicocha30/ligolo-ng/pkg/controller"
-	"github.com/nicocha30/ligolo-ng/pkg/proxy"
-	"github.com/nicocha30/ligolo-ng/pkg/proxy/netstack"
 	"github.com/sirupsen/logrus"
 )
 
@@ -60,6 +62,316 @@ var (
 	ErrAlreadyRunning = errors.New("already running")
 	ErrNotRunning     = errors.New("no tunnel started")
 )
+
+const (
+	pathRTTProbeTimeout = 1500 * time.Millisecond
+	pathRTTCacheTTL     = 5 * time.Second
+)
+
+type pathRTTCacheEntry struct {
+	value     *int64
+	checkedAt time.Time
+}
+
+var pathRTTCache = struct {
+	sync.Mutex
+	entries map[string]pathRTTCacheEntry
+}{
+	entries: make(map[string]pathRTTCacheEntry),
+}
+
+func cloneInt64(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func chainAgentInfos() []proxy.AgentInfo {
+	AgentListMutex.Lock()
+
+	ids := make([]int, 0, len(AgentList))
+	for agentID := range AgentList {
+		ids = append(ids, agentID)
+	}
+	sort.Ints(ids)
+
+	type chainAgentEntry struct {
+		info  proxy.AgentInfo
+		agent *controller.LigoloAgent
+	}
+	entries := make([]chainAgentEntry, 0, len(ids))
+	for _, agentID := range ids {
+		agent := AgentList[agentID]
+		remoteAddr := ""
+		if agent.Session != nil {
+			remoteAddr = agent.Session.RemoteAddr().String()
+		}
+		entries = append(entries, chainAgentEntry{
+			agent: agent,
+			info: proxy.AgentInfo{
+				AgentID:         agentID,
+				Name:            agent.Name,
+				SessionID:       agent.SessionID,
+				RemoteAddr:      remoteAddr,
+				RelayActive:     agent.RelayActive,
+				RelayListenAddr: agent.RelayListenAddr,
+				Alive:           agent.Alive(),
+				Running:         agent.Running,
+				ParentSessionID: agent.ParentAgentID,
+			},
+		})
+	}
+	AgentListMutex.Unlock()
+
+	type pathRTTProbe struct {
+		index     int
+		sessionID string
+		agent     *controller.LigoloAgent
+	}
+	type pathRTTProbeResult struct {
+		index     int
+		sessionID string
+		value     *int64
+	}
+
+	now := time.Now()
+	agents := make([]proxy.AgentInfo, len(entries))
+	probes := make([]pathRTTProbe, 0, len(entries))
+
+	pathRTTCache.Lock()
+	for index, entry := range entries {
+		info := entry.info
+		if info.SessionID == "" {
+			agents[index] = info
+			continue
+		}
+		if !info.Alive {
+			delete(pathRTTCache.entries, info.SessionID)
+			agents[index] = info
+			continue
+		}
+		if cached, ok := pathRTTCache.entries[info.SessionID]; ok && now.Sub(cached.checkedAt) < pathRTTCacheTTL {
+			info.PathRTTMS = cloneInt64(cached.value)
+		} else {
+			probes = append(probes, pathRTTProbe{
+				index:     index,
+				sessionID: info.SessionID,
+				agent:     entry.agent,
+			})
+		}
+		agents[index] = info
+	}
+	pathRTTCache.Unlock()
+
+	if len(probes) == 0 {
+		return agents
+	}
+
+	results := make(chan pathRTTProbeResult, len(probes))
+	var wg sync.WaitGroup
+	for _, probe := range probes {
+		wg.Add(1)
+		go func(probe pathRTTProbe) {
+			defer wg.Done()
+			var pathRTTMS *int64
+			if pathRTT, err := probe.agent.ProbePathRTT(pathRTTProbeTimeout); err == nil {
+				value := pathRTT.Milliseconds()
+				pathRTTMS = &value
+			}
+			results <- pathRTTProbeResult{
+				index:     probe.index,
+				sessionID: probe.sessionID,
+				value:     pathRTTMS,
+			}
+		}(probe)
+	}
+	wg.Wait()
+	close(results)
+
+	pathRTTCache.Lock()
+	for result := range results {
+		agents[result.index].PathRTTMS = cloneInt64(result.value)
+		pathRTTCache.entries[result.sessionID] = pathRTTCacheEntry{
+			value:     cloneInt64(result.value),
+			checkedAt: time.Now(),
+		}
+	}
+	pathRTTCache.Unlock()
+
+	return agents
+}
+
+func chainSnapshot() proxy.ChainSnapshot {
+	return ChainMgr.Snapshot(chainAgentInfos())
+}
+
+type ChainRouteInfo struct {
+	AgentID         int    `json:"agent_id"`
+	Name            string `json:"name"`
+	SessionID       string `json:"session_id"`
+	ParentSessionID string `json:"parent_session_id"`
+	HopDepth        int    `json:"hop_depth"`
+	Interface       string `json:"interface"`
+	Route           string `json:"route"`
+}
+
+func candidateRoutes(agent *controller.LigoloAgent, includeIPv6 bool) []string {
+	var routes []string
+	for _, ifaceInfo := range agent.Network {
+		for _, address := range ifaceInfo.Addresses {
+			ip, _, err := net.ParseCIDR(address)
+			if err != nil {
+				continue
+			}
+			if ip.IsLoopback() {
+				continue
+			}
+			if ip.To4() != nil || includeIPv6 {
+				routes = append(routes, address)
+			}
+		}
+	}
+	sort.Strings(routes)
+	return routes
+}
+
+func chainInterfaceName(prefix string, agentID int) string {
+	if prefix == "" {
+		prefix = "ligolo"
+	}
+	return fmt.Sprintf("%s%d", prefix, agentID)
+}
+
+func chainRouteInfos(includeIPv6 bool, interfacePrefix string) []ChainRouteInfo {
+	AgentListMutex.Lock()
+	ids := make([]int, 0, len(AgentList))
+	for agentID := range AgentList {
+		ids = append(ids, agentID)
+	}
+	sort.Ints(ids)
+
+	agents := make(map[int]*controller.LigoloAgent, len(AgentList))
+	for _, agentID := range ids {
+		agents[agentID] = AgentList[agentID]
+	}
+	AgentListMutex.Unlock()
+
+	var routes []ChainRouteInfo
+	for _, agentID := range ids {
+		agent := agents[agentID]
+		if agent == nil || !agent.Alive() {
+			continue
+		}
+		for _, route := range candidateRoutes(agent, includeIPv6) {
+			routes = append(routes, ChainRouteInfo{
+				AgentID:         agentID,
+				Name:            agent.Name,
+				SessionID:       agent.SessionID,
+				ParentSessionID: agent.ParentAgentID,
+				HopDepth:        ChainMgr.GetChainDepth(agent.SessionID),
+				Interface:       chainInterfaceName(interfacePrefix, agentID),
+				Route:           route,
+			})
+		}
+	}
+	return routes
+}
+
+func configureChainAutoroutes(includeIPv6 bool, interfacePrefix string, start bool) ([]ChainRouteInfo, error) {
+	routes := chainRouteInfos(includeIPv6, interfacePrefix)
+	if len(routes) == 0 {
+		return nil, errors.New("no route candidates available")
+	}
+
+	interfacesByAgent := make(map[int]string)
+	for _, route := range routes {
+		interfacesByAgent[route.AgentID] = route.Interface
+		if err := config.EnsureInterfaceConfig(route.Interface); err != nil {
+			return nil, fmt.Errorf("could not configure interface %s: %w", route.Interface, err)
+		}
+		if err := config.EnsureRouteConfig(route.Interface, route.Route); err != nil {
+			return nil, fmt.Errorf("could not configure route %s on %s: %w", route.Route, route.Interface, err)
+		}
+	}
+
+	if start {
+		ids := make([]int, 0, len(interfacesByAgent))
+		for agentID := range interfacesByAgent {
+			ids = append(ids, agentID)
+		}
+		sort.Ints(ids)
+
+		AgentListMutex.Lock()
+		agents := make(map[int]*controller.LigoloAgent, len(ids))
+		for _, agentID := range ids {
+			agents[agentID] = AgentList[agentID]
+		}
+		AgentListMutex.Unlock()
+
+		for _, agentID := range ids {
+			agent := agents[agentID]
+			if agent == nil || !agent.Alive() || agent.Running {
+				continue
+			}
+			if err := StartTunnel(agent, interfacesByAgent[agentID]); err != nil {
+				return nil, fmt.Errorf("unable to start tunnel for agent %d: %w", agentID, err)
+			}
+		}
+	}
+
+	return routes, nil
+}
+
+func relayConnectCommand(listenAddr, fingerprint, authToken string) string {
+	host, port, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return fmt.Sprintf("./agent -connect <relay-agent-reachable-ip>:%s -accept-fingerprint %s -relay-token %s", listenAddr, fingerprint, authToken)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		return fmt.Sprintf("./agent -connect <relay-agent-reachable-ip>:%s -accept-fingerprint %s -relay-token %s", port, fingerprint, authToken)
+	}
+	return fmt.Sprintf("./agent -connect %s -accept-fingerprint %s -relay-token %s", net.JoinHostPort(host, port), fingerprint, authToken)
+}
+
+func relayListenPort(listenAddr string) string {
+	_, port, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return "<port>"
+	}
+	return port
+}
+
+func stopRelayWithDownstream(relayAgent *controller.LigoloAgent) error {
+	descendants := ChainMgr.GetDescendantSessionIDs(relayAgent.SessionID)
+
+	AgentListMutex.Lock()
+	for _, sessionID := range descendants {
+		for _, agent := range AgentList {
+			if agent.SessionID != sessionID {
+				continue
+			}
+			if agent.Running {
+				select {
+				case agent.CloseChan <- true:
+				default:
+				}
+				agent.Running = false
+			}
+			if agent.Session != nil {
+				agent.Session.Close()
+			}
+			agent.ParentAgentID = ""
+		}
+	}
+	AgentListMutex.Unlock()
+
+	for _, sessionID := range descendants {
+		ChainMgr.RemoveAgent(sessionID)
+	}
+	return relayAgent.StopRelay()
+}
 
 func genRandomUUID() string {
 	b := make([]byte, 8)
@@ -245,16 +557,17 @@ func RegisterAgent(agent *controller.LigoloAgent) error {
 			// Restore relay if it was previously active
 			if registeredAgents.RelayActive {
 				savedRelayAddr := registeredAgents.RelayListenAddr
+				savedRelayAuthToken := registeredAgents.RelayAuthToken
 				// Reset relay state before restarting
 				registeredAgents.RelayActive = false
 				registeredAgents.RelayControl = nil
 
 				logrus.Infof("Restoring relay on agent %s at %s", registeredAgents.Name, savedRelayAddr)
-				fingerprint, err := registeredAgents.StartRelay(savedRelayAddr)
+				fingerprint, authToken, err := registeredAgents.StartRelay(savedRelayAddr, savedRelayAuthToken)
 				if err != nil {
 					logrus.Errorf("Failed to restore relay: %v", err)
 				} else {
-					logrus.Infof("Relay restored (fingerprint: %s). Downstream agents can reconnect.", fingerprint)
+					logrus.Infof("Relay restored (fingerprint: %s). Downstream agents can reconnect with: %s", fingerprint, relayConnectCommand(savedRelayAddr, fingerprint, authToken))
 					go registeredAgents.HandleRelayNotifications(ChainMgr, func(a *controller.LigoloAgent) error {
 						logrus.WithFields(logrus.Fields{
 							"name":    a.Name,
@@ -876,10 +1189,11 @@ func Run() {
 	App.AddCommand(&grumble.Command{
 		Name:      "relay_start",
 		Help:      "Start relay mode on the current agent to accept downstream agents",
-		Usage:     "relay_start --addr 0.0.0.0:11602",
+		Usage:     "relay_start --addr <agent-interface-ip>:11602",
 		HelpGroup: "Relay",
 		Flags: func(f *grumble.Flags) {
-			f.StringL("addr", "0.0.0.0:11602", "The address:port the agent should listen on for downstream agents")
+			f.StringL("addr", "127.0.0.1:11602", "The address:port the agent should listen on for downstream agents")
+			f.StringL("relay-token", "", "Optional downstream relay auth token; generated when empty")
 		},
 		Run: func(c *grumble.Context) error {
 			if _, ok := AgentList[CurrentAgentID]; !ok {
@@ -896,14 +1210,16 @@ func Run() {
 				return fmt.Errorf("relay already active on %s", currentAgent.RelayListenAddr)
 			}
 
-			fingerprint, err := currentAgent.StartRelay(c.Flags.String("addr"))
+			fingerprint, authToken, err := currentAgent.StartRelay(c.Flags.String("addr"), c.Flags.String("relay-token"))
 			if err != nil {
 				return fmt.Errorf("could not start relay: %v", err)
 			}
 
 			logrus.Infof("Relay started on agent %s at %s", currentAgent.Name, c.Flags.String("addr"))
 			logrus.Infof("TLS Certificate fingerprint: %s", fingerprint)
-			logrus.Infof("Downstream agents can connect with: ./agent -connect <agent_ip>:%s -ignore-cert", strings.Split(c.Flags.String("addr"), ":")[len(strings.Split(c.Flags.String("addr"), ":"))-1])
+			logrus.Infof("Relay auth token: %s", authToken)
+			logrus.Infof("Downstream agents can connect with: %s", relayConnectCommand(c.Flags.String("addr"), fingerprint, authToken))
+			logrus.Infof("Debug fallback only: ./agent -connect <relay-agent-reachable-ip>:%s -ignore-cert -relay-token %s", relayListenPort(c.Flags.String("addr")), authToken)
 
 			// Start listening for downstream agent notifications
 			go currentAgent.HandleRelayNotifications(ChainMgr, func(agent *controller.LigoloAgent) error {
@@ -940,29 +1256,30 @@ func Run() {
 				}
 			}
 
-			return currentAgent.StopRelay()
+			return stopRelayWithDownstream(currentAgent)
 		},
 	})
 
 	App.AddCommand(&grumble.Command{
 		Name:      "chain_list",
 		Help:      "Show the relay chain topology",
-		Usage:     "chain_list",
+		Usage:     "chain_list [--json]",
 		HelpGroup: "Relay",
+		Flags: func(f *grumble.Flags) {
+			f.BoolL("json", false, "print structured JSON")
+		},
 		Run: func(c *grumble.Context) error {
-			AgentListMutex.Lock()
-			var agents []proxy.AgentInfo
-			for _, agent := range AgentList {
-				agents = append(agents, proxy.AgentInfo{
-					Name:        agent.Name,
-					SessionID:   agent.SessionID,
-					RelayActive: agent.RelayActive,
-					Alive:       agent.Alive(),
-				})
+			snapshot := chainSnapshot()
+			if c.Flags.Bool("json") {
+				encoded, err := json.MarshalIndent(snapshot, "", "  ")
+				if err != nil {
+					return err
+				}
+				App.Println(string(encoded))
+				return nil
 			}
-			AgentListMutex.Unlock()
 
-			App.Println(ChainMgr.RenderTree(agents))
+			App.Println(snapshot.Topology)
 			return nil
 		},
 	})

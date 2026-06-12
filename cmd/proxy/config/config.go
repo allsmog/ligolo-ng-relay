@@ -23,6 +23,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
+
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
@@ -158,6 +160,21 @@ func secureConfigPasswords() {
 	Config.Set("web.users", users)
 }
 
+func SetWebUserPassword(username, password string) error {
+	if username == "" {
+		return errors.New("web username cannot be empty")
+	}
+	if password == "" {
+		return errors.New("web password cannot be empty")
+	}
+	hash, err := argon2Hash(password)
+	if err != nil {
+		return err
+	}
+	Config.Set("web.users", map[string]string{username: hash})
+	return nil
+}
+
 func ask(question string) bool {
 	result := false
 	prompt := &survey.Confirm{
@@ -167,18 +184,27 @@ func ask(question string) bool {
 	return result
 }
 
-func InitConfig(configFile string) {
+func InitConfig(configFile string, nonInteractive ...bool) {
 	var firstStart bool
+	noPrompt := len(nonInteractive) > 0 && nonInteractive[0]
+	explicitConfigFile := configFile != ""
 	if configFile == "" {
-		configFile = "ligolo-ng.yaml"
+		configFile = "ligolo-ng-relay.yaml"
 	} else {
 		if _, err := os.Stat(configFile); errors.Is(err, os.ErrNotExist) {
 			logrus.Fatal("config file does not exist")
 		}
 	}
-	Config.SetConfigName(configFile)
+
+	if explicitConfigFile && (filepath.IsAbs(configFile) || filepath.Dir(configFile) != ".") {
+		Config.SetConfigFile(configFile)
+	} else {
+		Config.SetConfigName(configFile)
+	}
 	Config.SetConfigType("yaml")
 	Config.AddConfigPath(".")
+	Config.AddConfigPath("$HOME/.ligolo-ng-relay-proxy")
+	Config.AddConfigPath("/etc/ligolo-ng-relay-proxy")
 	Config.AddConfigPath("$HOME/.ligolo-proxy")
 	Config.AddConfigPath("/etc/ligolo-proxy")
 
@@ -201,17 +227,20 @@ func InitConfig(configFile string) {
 	}
 
 	if firstStart {
-		enableWebUI := ask("Enable Ligolo-ng WebUI?")
+		enableWebUI := false
+		if !noPrompt {
+			enableWebUI = ask("Enable Ligolo-ng Relay WebUI?")
+		}
 		Config.SetDefault("web.enabled", enableWebUI)
 		Config.SetDefault("web.enableui", enableWebUI)
 
 		if enableWebUI {
-			if ask("Allow CORS Access from https://webui.ligolo.ng?") {
+			if !noPrompt && ask("Allow CORS Access from https://webui.ligolo.ng?") {
 				Config.SetDefault("web.corsAllowedOrigin", []string{"https://webui.ligolo.ng"})
 			} else {
 				Config.SetDefault("web.corsAllowedOrigin", []string{"http://127.0.0.1:8080"})
 			}
-			logrus.Warn("WebUI enabled, default username and login are ligolo:password - make sure to update ligolo-ng.yaml to change credentials!")
+			logrus.Warn("WebUI enabled, default username and login are ligolo:password - make sure to update ligolo-ng-relay.yaml to change credentials!")
 		}
 	} else {
 		Config.SetDefault("web.enabled", false)

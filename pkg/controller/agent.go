@@ -17,14 +17,17 @@
 package controller
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
 	"time"
 
+	"github.com/allsmog/ligolo-ng-relay/pkg/protocol"
+	"github.com/allsmog/ligolo-ng-relay/pkg/proxy"
 	"github.com/hashicorp/yamux"
-	"github.com/nicocha30/ligolo-ng/pkg/protocol"
-	"github.com/nicocha30/ligolo-ng/pkg/proxy"
 	"github.com/sirupsen/logrus"
 )
 
@@ -40,6 +43,7 @@ type LigoloAgent struct {
 	RelayCapable    bool
 	RelayActive     bool
 	RelayListenAddr string
+	RelayAuthToken  string   `json:"-"`
 	RelayControl    net.Conn `json:"-"`
 	ParentAgentID   string   // SessionID of the relay agent (empty if direct)
 }
@@ -49,6 +53,34 @@ func (la *LigoloAgent) Alive() bool {
 		return true
 	}
 	return false
+}
+
+func (la *LigoloAgent) ProbePathRTT(timeout time.Duration) (time.Duration, error) {
+	if la.Session == nil || la.Session.IsClosed() {
+		return 0, fmt.Errorf("agent is offline")
+	}
+	conn, err := la.Session.Open()
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+	if timeout > 0 {
+		_ = conn.SetDeadline(time.Now().Add(timeout))
+	}
+
+	encoder := protocol.NewEncoder(conn)
+	decoder := protocol.NewDecoder(conn)
+	start := time.Now()
+	if err := encoder.Encode(protocol.InfoRequestPacket{}); err != nil {
+		return 0, err
+	}
+	if err := decoder.Decode(); err != nil {
+		return 0, err
+	}
+	if _, ok := decoder.Payload.(*protocol.InfoReplyPacket); !ok {
+		return 0, fmt.Errorf("unexpected health probe response")
+	}
+	return time.Since(start), nil
 }
 
 func (la *LigoloAgent) Kill() error {
@@ -100,20 +132,41 @@ func (la *LigoloAgent) DeleteListener(id int) {
 	}
 }
 
+func GenerateRelayAuthToken() (string, error) {
+	token := make([]byte, 32)
+	if _, err := rand.Read(token); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(token), nil
+}
+
+func relayAuthTokenHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return fmt.Sprintf("%x", sum[:])
+}
+
 // StartRelay activates relay mode on this agent, instructing it to listen for
-// downstream agents on the given address. Returns the TLS certificate fingerprint.
-func (la *LigoloAgent) StartRelay(listenAddr string) (string, error) {
+// downstream agents on the given address. Returns the TLS certificate fingerprint
+// and the downstream auth token that agents must present.
+func (la *LigoloAgent) StartRelay(listenAddr string, authToken string) (string, string, error) {
 	if la.RelayActive {
-		return "", fmt.Errorf("relay already active on %s", la.RelayListenAddr)
+		return "", "", fmt.Errorf("relay already active on %s", la.RelayListenAddr)
 	}
 	if !la.RelayCapable {
-		return "", fmt.Errorf("agent %s does not support relay mode", la.Name)
+		return "", "", fmt.Errorf("agent %s does not support relay mode", la.Name)
+	}
+	if authToken == "" {
+		var err error
+		authToken, err = GenerateRelayAuthToken()
+		if err != nil {
+			return "", "", fmt.Errorf("could not generate relay auth token: %v", err)
+		}
 	}
 
 	// Open a yamux stream to the agent for the relay control channel
 	controlStream, err := la.Session.Open()
 	if err != nil {
-		return "", fmt.Errorf("could not open relay control stream: %v", err)
+		return "", "", fmt.Errorf("could not open relay control stream: %v", err)
 	}
 
 	encoder := protocol.NewEncoder(controlStream)
@@ -121,33 +174,35 @@ func (la *LigoloAgent) StartRelay(listenAddr string) (string, error) {
 
 	// Send relay request
 	if err := encoder.Encode(protocol.RelayRequestPacket{
-		ListenAddr: listenAddr,
+		ListenAddr:    listenAddr,
+		AuthTokenHash: relayAuthTokenHash(authToken),
 	}); err != nil {
 		controlStream.Close()
-		return "", fmt.Errorf("could not send relay request: %v", err)
+		return "", "", fmt.Errorf("could not send relay request: %v", err)
 	}
 
 	// Read response
 	if err := decoder.Decode(); err != nil {
 		controlStream.Close()
-		return "", fmt.Errorf("could not read relay response: %v", err)
+		return "", "", fmt.Errorf("could not read relay response: %v", err)
 	}
 
 	resp, ok := decoder.Payload.(*protocol.RelayResponsePacket)
 	if !ok {
 		controlStream.Close()
-		return "", fmt.Errorf("unexpected response type")
+		return "", "", fmt.Errorf("unexpected response type")
 	}
 	if resp.Err {
 		controlStream.Close()
-		return "", fmt.Errorf("agent relay error: %s", resp.ErrString)
+		return "", "", fmt.Errorf("agent relay error: %s", resp.ErrString)
 	}
 
 	la.RelayActive = true
 	la.RelayListenAddr = listenAddr
+	la.RelayAuthToken = authToken
 	la.RelayControl = controlStream
 
-	return resp.CertFingerprint, nil
+	return resp.CertFingerprint, authToken, nil
 }
 
 // StopRelay deactivates relay mode by closing the control stream.
@@ -160,6 +215,7 @@ func (la *LigoloAgent) StopRelay() error {
 	}
 	la.RelayActive = false
 	la.RelayListenAddr = ""
+	la.RelayAuthToken = ""
 	la.RelayControl = nil
 	return nil
 }
@@ -244,7 +300,20 @@ func (la *LigoloAgent) HandleRelayNotifications(chainMgr *proxy.ChainManager, re
 
 		if err := registerFunc(downstreamAgent); err != nil {
 			logrus.Errorf("Relay: could not register downstream agent: %v", err)
+			downstreamSession.Close()
+			chainMgr.RemoveAgent(downstreamAgent.SessionID)
+			continue
 		}
+
+		go func(a *LigoloAgent) {
+			<-a.Session.CloseChan()
+			chainMgr.RemoveAgent(a.SessionID)
+			logrus.WithFields(logrus.Fields{
+				"name":    a.Name,
+				"session": a.SessionID,
+				"via":     la.Name,
+			}).Warn("Downstream agent dropped")
+		}(downstreamAgent)
 	}
 }
 

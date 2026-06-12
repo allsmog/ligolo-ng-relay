@@ -57,10 +57,10 @@ func TestRelayPackets(t *testing.T) {
 	}{
 		{
 			name:   "RelayRequest",
-			packet: RelayRequestPacket{ListenAddr: "0.0.0.0:11602"},
+			packet: RelayRequestPacket{ListenAddr: "0.0.0.0:11602", AuthTokenHash: "abc123"},
 			checker: func(p interface{}) bool {
 				pkt := p.(*RelayRequestPacket)
-				return pkt.ListenAddr == "0.0.0.0:11602"
+				return pkt.ListenAddr == "0.0.0.0:11602" && pkt.AuthTokenHash == "abc123"
 			},
 		},
 		{

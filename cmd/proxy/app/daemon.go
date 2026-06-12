@@ -18,15 +18,14 @@ package app
 
 import (
 	"fmt"
+	"github.com/allsmog/ligolo-ng-relay/cmd/proxy/config"
+	"github.com/allsmog/ligolo-ng-relay/pkg/controller"
+	"github.com/allsmog/ligolo-ng-relay/pkg/proxy/netinfo"
+	"github.com/allsmog/ligolo-ng-relay/pkg/tlsutils"
+	"github.com/allsmog/ligolo-ng-relay/web"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/static"
 	"github.com/gin-gonic/gin"
-	"github.com/nicocha30/ligolo-ng/cmd/proxy/config"
-	"github.com/nicocha30/ligolo-ng/pkg/controller"
-	"github.com/nicocha30/ligolo-ng/pkg/proxy"
-	"github.com/nicocha30/ligolo-ng/pkg/proxy/netinfo"
-	"github.com/nicocha30/ligolo-ng/pkg/tlsutils"
-	"github.com/nicocha30/ligolo-ng/web"
 	"github.com/sirupsen/logrus"
 	"io"
 	"net/http"
@@ -88,7 +87,7 @@ func StartLigoloApi() {
 	} else {
 		gin.SetMode(gin.ReleaseMode)
 	}
-	logrus.Warn("Ligolo-ng API is experimental, and should be running behind a reverse-proxy if publicly exposed.")
+	logrus.Warn("Ligolo-ng Relay API is experimental, and should be running behind a reverse-proxy if publicly exposed.")
 
 	if config.Config.GetString("web.logfile") != "" {
 		f, err := os.Create(config.Config.GetString("web.logfile"))
@@ -418,6 +417,7 @@ func StartLigoloApi() {
 		apiv1.POST("/relay/:id", func(c *gin.Context) {
 			type RelayRequest struct {
 				ListenAddr string
+				AuthToken  string
 			}
 			var relayReq RelayRequest
 			agentParam := c.Param("id")
@@ -441,7 +441,7 @@ func StartLigoloApi() {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "agent does not support relay mode"})
 				return
 			}
-			fingerprint, err := agent.StartRelay(relayReq.ListenAddr)
+			fingerprint, authToken, err := agent.StartRelay(relayReq.ListenAddr, relayReq.AuthToken)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
@@ -451,7 +451,12 @@ func StartLigoloApi() {
 				logrus.WithFields(logrus.Fields{"name": a.Name, "session": a.SessionID, "via": agent.Name}).Info("Downstream agent connected via relay")
 				return RegisterAgent(a)
 			})
-			c.JSON(http.StatusOK, gin.H{"message": "relay started", "fingerprint": fingerprint})
+			c.JSON(http.StatusOK, gin.H{
+				"message":         "relay started",
+				"fingerprint":     fingerprint,
+				"auth_token":      authToken,
+				"connect_command": relayConnectCommand(relayReq.ListenAddr, fingerprint, authToken),
+			})
 		})
 
 		apiv1.DELETE("/relay/:id", func(c *gin.Context) {
@@ -468,7 +473,7 @@ func StartLigoloApi() {
 				c.JSON(http.StatusNotFound, gin.H{"error": "invalid agent"})
 				return
 			}
-			if err := agent.StopRelay(); err != nil {
+			if err := stopRelayWithDownstream(agent); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
@@ -476,18 +481,39 @@ func StartLigoloApi() {
 		})
 
 		apiv1.GET("/chains", func(c *gin.Context) {
-			AgentListMutex.Lock()
-			var agents []proxy.AgentInfo
-			for _, agent := range AgentList {
-				agents = append(agents, proxy.AgentInfo{
-					Name:        agent.Name,
-					SessionID:   agent.SessionID,
-					RelayActive: agent.RelayActive,
-					Alive:       agent.Alive(),
-				})
+			c.JSON(http.StatusOK, chainSnapshot())
+		})
+
+		apiv1.GET("/chain_routes", func(c *gin.Context) {
+			withIPv6, err := strconv.ParseBool(c.DefaultQuery("with_ipv6", "false"))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, inputError)
+				return
 			}
-			AgentListMutex.Unlock()
-			c.JSON(http.StatusOK, gin.H{"topology": ChainMgr.RenderTree(agents)})
+			interfacePrefix := c.DefaultQuery("interface_prefix", "ligolo")
+			c.JSON(http.StatusOK, gin.H{"routes": chainRouteInfos(withIPv6, interfacePrefix)})
+		})
+
+		apiv1.POST("/chain_autoroute", func(c *gin.Context) {
+			type ChainAutorouteRequest struct {
+				WithIPv6        bool
+				InterfacePrefix string
+				Start           bool
+			}
+			var req ChainAutorouteRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, inputError)
+				return
+			}
+			if req.InterfacePrefix == "" {
+				req.InterfacePrefix = "ligolo"
+			}
+			routes, err := configureChainAutoroutes(req.WithIPv6, req.InterfacePrefix, req.Start)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "chain autoroute configured", "routes": routes})
 		})
 
 		apiv1.POST("/tunnel/:id", func(c *gin.Context) {

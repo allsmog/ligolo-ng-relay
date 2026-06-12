@@ -1,4 +1,4 @@
-module github.com/nicocha30/ligolo-ng
+module github.com/allsmog/ligolo-ng-relay
 
 go 1.24.0
 

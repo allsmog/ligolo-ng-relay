@@ -19,18 +19,18 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/nicocha30/ligolo-ng/cmd/proxy/config"
-	"github.com/nicocha30/ligolo-ng/pkg/tlsutils"
+	"github.com/allsmog/ligolo-ng-relay/cmd/proxy/config"
+	"github.com/allsmog/ligolo-ng-relay/pkg/tlsutils"
 	"log"
 	"os"
 	"runtime"
 	"runtime/pprof"
 	"strings"
 
+	"github.com/allsmog/ligolo-ng-relay/cmd/proxy/app"
+	"github.com/allsmog/ligolo-ng-relay/pkg/controller"
 	"github.com/desertbit/grumble"
 	"github.com/hashicorp/yamux"
-	"github.com/nicocha30/ligolo-ng/cmd/proxy/app"
-	"github.com/nicocha30/ligolo-ng/pkg/controller"
 	"github.com/sirupsen/logrus"
 )
 
@@ -54,14 +54,22 @@ func main() {
 	var hideBanner = flag.Bool("nobanner", false, "don't show banner on startup")
 	var configFile = flag.String("config", "", "the config file to use")
 	var daemonMode = flag.Bool("daemon", false, "run as daemon mode (no CLI)")
+	var apiEnabled = flag.Bool("api", false, "enable the Web/API server without editing the config file")
 	var apiListenAddr = flag.String("api-laddr", "", "API server listening address (default: 127.0.0.1:8080)")
+	var webDisableUI = flag.Bool("no-web-ui", false, "disable the embedded Web UI while keeping the API server available")
+	var webUser string
+	var webPassword string
 	var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to `file`")
 	var memprofile = flag.String("memprofile", "", "write memory profile to `file`")
+	flag.StringVar(&webUser, "web-user", "", "Web/API username override")
+	flag.StringVar(&webUser, "api-user", "", "alias for -web-user")
+	flag.StringVar(&webPassword, "web-password", "", "Web/API password override")
+	flag.StringVar(&webPassword, "api-password", "", "alias for -web-password")
 
 	flag.Usage = func() {
-		fmt.Printf("Ligolo-ng %s / %s / %s\n", version, commit, date)
-		fmt.Println("Made in France with love by @Nicocha30!")
-		fmt.Println("https://github.com/nicocha30/ligolo-ng")
+		fmt.Printf("Ligolo-ng Relay %s / %s / %s\n", version, commit, date)
+		fmt.Println("Maintained fork of Ligolo-ng by @Nicocha30")
+		fmt.Println("https://github.com/allsmog/ligolo-ng-relay")
 		fmt.Printf("\nUsage of %s:\n", os.Args[0])
 		flag.PrintDefaults()
 	}
@@ -79,14 +87,28 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
-	config.InitConfig(*configFile)
+	config.InitConfig(*configFile, *daemonMode)
 
+	if *apiEnabled {
+		config.Config.Set("web.enabled", true)
+	}
 	if *apiListenAddr != "" {
 		config.Config.Set("web.listen", *apiListenAddr)
 	}
+	if *webDisableUI {
+		config.Config.Set("web.enableui", false)
+	}
+	if webUser != "" || webPassword != "" {
+		if webUser == "" || webPassword == "" {
+			logrus.Fatal("both -web-user and -web-password must be set")
+		}
+		if err := config.SetWebUserPassword(webUser, webPassword); err != nil {
+			logrus.Fatal(err)
+		}
+	}
 
 	if *versionFlag {
-		fmt.Printf("Ligolo-ng %s / %s / %s\n", version, commit, date)
+		fmt.Printf("Ligolo-ng Relay %s / %s / %s\n", version, commit, date)
 		return
 	}
 
@@ -170,6 +192,7 @@ func main() {
 				for {
 					select {
 					case <-agent.Session.CloseChan(): // Agent closed
+						app.ChainMgr.RemoveAgent(agent.SessionID)
 						logrus.WithFields(logrus.Fields{"remote": remoteConn.RemoteAddr(), "name": agent.Name, "id": agent.SessionID}).Warnf("Agent dropped.")
 						return
 					}

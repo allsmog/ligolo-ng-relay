@@ -23,11 +23,11 @@ import (
 
 // App is used to register the grumble
 var App = grumble.New(&grumble.Config{
-	Name:                  "ligolo-ng",
-	Description:           "Ligolo-ng - An advanced, yet simple tunneling tool",
+	Name:                  "ligolo-ng-relay",
+	Description:           "Ligolo-ng Relay - A maintained relay-chain fork of Ligolo-ng",
 	HelpHeadlineUnderline: true,
 	HelpSubCommands:       true,
-	HistoryFile:           "ligolo-ng.history",
+	HistoryFile:           "ligolo-ng-relay.history",
 })
 
 func ask(question string) bool {

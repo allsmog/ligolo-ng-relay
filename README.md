@@ -1,4 +1,4 @@
-# Warren : Tunneling like a VPN
+# Ligolo-ng Relay : Tunneling like a VPN
 
 ![Ligolo Logo](doc/logo.png)
 
@@ -7,11 +7,14 @@ An advanced, yet simple, tunneling tool that uses TUN interfaces — extended fo
 
 [![GPLv3](https://img.shields.io/badge/License-GPLv3-brightgreen.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-> **This is a fork of [Ligolo-ng](https://github.com/nicocha30/ligolo-ng).** Warren
-> adds multi-hop agent chaining (relay mode), so an agent can act as a lightweight
-> TLS relay for downstream agents that cannot reach the proxy directly, plus ICMP
-> Port Unreachable responses that make UDP scans return instantly instead of timing
-> out. See **[ENHANCEMENTS.md](ENHANCEMENTS.md)** for details and usage.
+> **Ligolo-ng Relay is a maintained fork of
+> [Ligolo-ng](https://github.com/nicocha30/ligolo-ng).** It adds recursive relay
+> chains, so an agent can act as a lightweight TLS relay for downstream agents
+> that cannot reach the proxy directly, plus ICMP Port Unreachable responses that
+> make UDP scans return instantly instead of timing out. See
+> **[ENHANCEMENTS.md](ENHANCEMENTS.md)** for details and usage.
+> The exact fork delta is tracked in **[FORK-DELTA.md](FORK-DELTA.md)**, and the
+> relay path can be verified with `make relay-test`.
 >
 > Setup, quickstart, and core usage are unchanged from upstream — the upstream
 > [Ligolo-ng Documentation](https://docs.ligolo.ng/) still applies.
@@ -51,8 +54,8 @@ An advanced, yet simple, tunneling tool that uses TUN interfaces — extended fo
 
 ## Introduction
 
-**Ligolo-ng** is a *simple*, *lightweight* and *fast* tool that allows pentesters to establish
-tunnels from a reverse TCP/TLS connection using a **tun interface** (without the need of SOCKS).
+**Ligolo-ng Relay** keeps Ligolo-ng's simple, lightweight TUN-based tunneling
+model and adds recursive relay chains for multi-pivot operator workflows.
 
 ## Features
 
@@ -71,13 +74,31 @@ tunnels from a reverse TCP/TLS connection using a **tun interface** (without the
 - **Multi-hop agent chaining (relay mode)** for pivoting through segmented networks (see [ENHANCEMENTS.md](ENHANCEMENTS.md))
 - **ICMP Port Unreachable** responses for fast UDP port scanning
 
+## Fork verification
+
+- `make relay-test` runs a Docker lab with a proxy, a direct relay agent, a
+  nested relay agent, and a downstream agent connected through the relay chain.
+- [doc/RELAY_API.md](doc/RELAY_API.md) documents scriptable relay control and
+  structured chain status, including the `relayctl` helper.
+- `chain_routes`, `chain_autoroute`, and `relayctl chain-autoroute` help set up
+  per-agent routes across direct and relayed sessions.
+- [doc/UDP_SCAN_BENCHMARK.md](doc/UDP_SCAN_BENCHMARK.md) describes how to measure
+  UDP scan speed and classification accuracy.
+- [doc/RESTRICTIVE_EGRESS.md](doc/RESTRICTIVE_EGRESS.md) covers WebSocket, HTTP
+  proxy, SOCKS, and relay-chain usage in constrained networks.
+- [doc/PERFORMANCE.md](doc/PERFORMANCE.md) gives repeatable path RTT and
+  throughput checks for relay chains.
+- [doc/RELEASE.md](doc/RELEASE.md) documents release gates and artifact signing.
+
 ## Demo
 
 [Ligolo-ng-demo.webm](https://github.com/nicocha30/ligolo-ng/assets/31402213/3070bb7c-0b0d-4c77-9181-cff74fb2f0ba)
 
 ## How is this different from Ligolo/Chisel/Meterpreter... ?
 
-Instead of using a SOCKS proxy or TCP/UDP forwarders, **Ligolo-ng** creates a userland network stack using [Gvisor](https://gvisor.dev/).
+Like upstream Ligolo-ng, **Ligolo-ng Relay** creates a userland network stack
+using [Gvisor](https://gvisor.dev/) instead of requiring SOCKS proxychains or
+manual TCP/UDP forwarders.
 
 When running the *relay/proxy* server, a **tun** interface is used, packets sent to this interface are
 translated, and then transmitted to the *agent* remote network.
@@ -93,7 +114,9 @@ This allows running tools like *nmap* without the use of *proxychains* (simpler 
 
 ## How to use - documentation - tutorial
 
-You will find the documentation for Ligolo-ng, as well as the steps to follow to get it up and running on the [Ligolo-ng Documentation](https://docs.ligolo.ng/)
+Core setup and usage are inherited from Ligolo-ng and remain documented in the
+[Ligolo-ng Documentation](https://docs.ligolo.ng/). Fork-specific relay-chain
+usage lives in [ENHANCEMENTS.md](ENHANCEMENTS.md) and [doc/RELAY_API.md](doc/RELAY_API.md).
 
 ## Does it require Administrator/root access ?
 
@@ -147,7 +170,9 @@ When using *nmap*, you should use `--unprivileged` or `-PE` to avoid false posit
 
 ## Credits
 
-Warren is a fork of [Ligolo-ng](https://github.com/nicocha30/ligolo-ng) by Nicolas Chatelain. All credit for the original tool goes to the upstream authors:
+Ligolo-ng Relay is a maintained fork of
+[Ligolo-ng](https://github.com/nicocha30/ligolo-ng) by Nicolas Chatelain. All
+credit for the original tool goes to the upstream authors:
 
 - Nicolas Chatelain <nicolas -at- chatelain.me>
 - Jeremie Bedjai (Ligolo-ng-Web)

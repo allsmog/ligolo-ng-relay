@@ -29,10 +29,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/nicocha30/ligolo-ng/pkg/agent/neterror"
-	"github.com/nicocha30/ligolo-ng/pkg/agent/smartping"
-	"github.com/nicocha30/ligolo-ng/pkg/protocol"
-	"github.com/nicocha30/ligolo-ng/pkg/relay"
+	"github.com/allsmog/ligolo-ng-relay/pkg/agent/neterror"
+	"github.com/allsmog/ligolo-ng-relay/pkg/agent/smartping"
+	"github.com/allsmog/ligolo-ng-relay/pkg/protocol"
+	"github.com/allsmog/ligolo-ng-relay/pkg/relay"
 	"github.com/sirupsen/logrus"
 )
 
@@ -364,7 +364,7 @@ func HandleConn(conn net.Conn) {
 		logrus.Infof("Received relay request for %s", relayRequest.ListenAddr)
 
 		// StartRelayListener sends the RelayResponsePacket itself (with cert fingerprint)
-		if err := StartRelayListener(relayRequest.ListenAddr, conn); err != nil {
+		if err := StartRelayListener(relayRequest.ListenAddr, relayRequest.AuthTokenHash, conn); err != nil {
 			logrus.Errorf("Relay start failed: %v", err)
 			encoder.Encode(protocol.RelayResponsePacket{
 				Err:       true,

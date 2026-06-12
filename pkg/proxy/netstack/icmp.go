@@ -19,6 +19,9 @@ package netstack
 import (
 	"bytes"
 	"errors"
+	"os"
+	"sync"
+	"time"
 
 	"encoding/binary"
 	"github.com/nicocha30/gvisor-ligolo/pkg/buffer"
@@ -33,6 +36,51 @@ import (
 	"github.com/nicocha30/gvisor-ligolo/pkg/waiter"
 	"github.com/sirupsen/logrus"
 )
+
+var icmpPortUnreachableLimiter = newICMPRateLimiter(icmpPortUnreachableInterval())
+
+func icmpPortUnreachableInterval() time.Duration {
+	value := os.Getenv("LIGOLO_ICMP_UNREACHABLE_INTERVAL")
+	if value == "" {
+		return time.Second
+	}
+	interval, err := time.ParseDuration(value)
+	if err != nil {
+		logrus.Warnf("invalid LIGOLO_ICMP_UNREACHABLE_INTERVAL=%q, using 1s", value)
+		return time.Second
+	}
+	return interval
+}
+
+type icmpRateLimiter struct {
+	mu       sync.Mutex
+	interval time.Duration
+	last     map[string]time.Time
+	now      func() time.Time
+}
+
+func newICMPRateLimiter(interval time.Duration) *icmpRateLimiter {
+	return &icmpRateLimiter{
+		interval: interval,
+		last:     make(map[string]time.Time),
+		now:      time.Now,
+	}
+}
+
+func (rl *icmpRateLimiter) allow(key string) bool {
+	if rl.interval <= 0 {
+		return true
+	}
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := rl.now()
+	if last, ok := rl.last[key]; ok && now.Sub(last) < rl.interval {
+		return false
+	}
+	rl.last[key] = now
+	return true
+}
 
 // icmpResponder handle ICMP packets coming to gvisor/netstack.
 // Instead of responding to all ICMPs ECHO by default, we try to
@@ -215,6 +263,11 @@ func SendICMPPortUnreachable(nstack *stack.Stack, endpointID stack.TransportEndp
 	// The ICMP error goes FROM the target back TO the scanner.
 	target := endpointID.LocalAddress
 	scanner := endpointID.RemoteAddress
+	rateLimitKey := target.String() + ">" + scanner.String()
+	if !icmpPortUnreachableLimiter.allow(rateLimitKey) {
+		logrus.Debugf("SendICMPPortUnreachable: rate-limited response for %s", rateLimitKey)
+		return
+	}
 
 	if target.Len() == 16 {
 		sendICMPv6PortUnreachable(nstack, target, scanner, endpointID.LocalPort, endpointID.RemotePort)

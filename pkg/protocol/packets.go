@@ -210,7 +210,8 @@ type AgentKillRequestPacket struct{}
 
 // RelayRequestPacket is sent by the proxy to instruct an agent to start a relay listener
 type RelayRequestPacket struct {
-	ListenAddr string
+	ListenAddr    string
+	AuthTokenHash string
 }
 
 // RelayResponsePacket is the response to RelayRequestPacket

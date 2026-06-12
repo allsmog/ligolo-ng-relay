@@ -20,16 +20,16 @@ all: linux windows
 	@chmod +x dist/*
 
 mac: lint
-	@env CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath ${LDFLAGS} ${GCFLAGS} ${ASMFLAGS} -o ${BASEDIR}/ligolo-ng-proxy-darwin_amd64 cmd/proxy/main.go
-	@env CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath ${LDFLAGS} ${GCFLAGS} ${ASMFLAGS} -o ${BASEDIR}/ligolo-ng-agent-darwin_amd64 cmd/agent/main.go
+	@env CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath ${LDFLAGS} ${GCFLAGS} ${ASMFLAGS} -o ${BASEDIR}/ligolo-ng-relay-proxy-darwin_amd64 cmd/proxy/main.go
+	@env CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath ${LDFLAGS} ${GCFLAGS} ${ASMFLAGS} -o ${BASEDIR}/ligolo-ng-relay-agent-darwin_amd64 cmd/agent/main.go
 
 linux: lint
-	@env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath ${LDFLAGS} ${GCFLAGS} ${ASMFLAGS} -o ${BASEDIR}/ligolo-ng-proxy-linux_amd64 cmd/proxy/main.go
-	@env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath ${LDFLAGS} ${GCFLAGS} ${ASMFLAGS} -o ${BASEDIR}/ligolo-ng-agent-linux_amd64 cmd/agent/main.go
+	@env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath ${LDFLAGS} ${GCFLAGS} ${ASMFLAGS} -o ${BASEDIR}/ligolo-ng-relay-proxy-linux_amd64 cmd/proxy/main.go
+	@env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath ${LDFLAGS} ${GCFLAGS} ${ASMFLAGS} -o ${BASEDIR}/ligolo-ng-relay-agent-linux_amd64 cmd/agent/main.go
 
 windows: lint
-	@env CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath ${LDFLAGS} ${GCFLAGS} ${ASMFLAGS} -o ${BASEDIR}/ligolo-ng-proxy-windows_amd64.exe cmd/proxy/main.go
-	@env CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath ${LDFLAGS} ${GCFLAGS} ${ASMFLAGS} -o ${BASEDIR}/ligolo-ng-agent-windows_amd64.exe cmd/agent/main.go
+	@env CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath ${LDFLAGS} ${GCFLAGS} ${ASMFLAGS} -o ${BASEDIR}/ligolo-ng-relay-proxy-windows_amd64.exe cmd/proxy/main.go
+	@env CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath ${LDFLAGS} ${GCFLAGS} ${ASMFLAGS} -o ${BASEDIR}/ligolo-ng-relay-agent-windows_amd64.exe cmd/agent/main.go
 
 tidy:
 	@go mod tidy
@@ -49,8 +49,11 @@ lint: ## Lint the files
 security:
 	@gosec -tests ./...
 
+relay-test:
+	@./test/relay/run.sh
+
 release:
-	@goreleaser release --config .github/goreleaser.yml
+	@goreleaser release --config .goreleaser.yaml
 
 clean:
 	@rm -rf ${BASEDIR}
@@ -61,5 +64,8 @@ terminal_proxy:
 terminal_agent:
 	go run cmd/agent/main.go -connect localhost:11601 -ignore-cert
 
+terminal_relayctl:
+	go run cmd/relayctl/main.go chains
 
-.PHONY: all linux windows tidy update dep lint security release clean terminal
+
+.PHONY: all linux windows tidy update dep lint security relay-test release clean terminal terminal_relayctl

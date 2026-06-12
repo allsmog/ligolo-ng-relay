@@ -23,9 +23,9 @@ import (
 	"io"
 	"net"
 
+	"github.com/allsmog/ligolo-ng-relay/pkg/protocol"
+	"github.com/allsmog/ligolo-ng-relay/pkg/relay"
 	"github.com/hashicorp/yamux"
-	"github.com/nicocha30/ligolo-ng/pkg/protocol"
-	"github.com/nicocha30/ligolo-ng/pkg/relay"
 	"github.com/sirupsen/logrus"
 )
 

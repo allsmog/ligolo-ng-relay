@@ -18,8 +18,8 @@ package proxy
 
 import (
 	"context"
+	"github.com/allsmog/ligolo-ng-relay/pkg/proxy/netstack"
 	"github.com/hashicorp/yamux"
-	"github.com/nicocha30/ligolo-ng/pkg/proxy/netstack"
 	"github.com/sirupsen/logrus"
 )
 
