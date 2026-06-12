@@ -430,7 +430,7 @@ func init() {
 								routes = append(routes, route.Destination)
 							}
 							routeStr := strings.Join(routes, ", ")
-							yellowRoutes := text.Colors{text.FgYellow}.Sprintf(routeStr)
+							yellowRoutes := text.Colors{text.FgYellow}.Sprintf("%s", routeStr)
 							displayName = fmt.Sprintf("%s %s", ifName, yellowRoutes)
 						}
 						ifaceOptions = append(ifaceOptions, displayName)
