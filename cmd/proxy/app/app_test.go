@@ -176,6 +176,9 @@ func TestRelayOpsReportSummarizesActionsAndConflicts(t *testing.T) {
 	if report.Summary.MeshDegraded == 0 {
 		t.Fatalf("mesh degraded = 0, want expired relay token to degrade mesh health")
 	}
+	if report.Summary.RepairActions == 0 {
+		t.Fatalf("repair actions = 0, want repair plan to expose pending actions")
+	}
 	if report.Summary.Warnings == 0 {
 		t.Fatalf("warnings = 0, want at least one")
 	}
@@ -251,6 +254,80 @@ func TestChainRoutePlanPrefersLowerCostDuplicate(t *testing.T) {
 	}
 	if !strings.Contains(decisionsByAgent[2].Reason, "preferred route cost") {
 		t.Fatalf("agent 2 reason = %q, want preferred route cost", decisionsByAgent[2].Reason)
+	}
+}
+
+func TestChainRepairPlanBuildsSafeAndManualActions(t *testing.T) {
+	rtt := int64(7)
+	routePlan := ChainRoutePlan{
+		Decisions: []ChainRouteDecision{
+			{
+				AgentID:           1,
+				Name:              "root@agent-a",
+				SessionID:         "agent-a",
+				Interface:         "relaytest1",
+				Route:             "10.20.30.5/24",
+				RouteKey:          "10.20.30.0/24",
+				Decision:          routeDecisionApply,
+				Preferred:         true,
+				Alive:             true,
+				PathRTTMS:         &rtt,
+				AlreadyConfigured: false,
+				StartTunnel:       true,
+			},
+			{
+				AgentID:           2,
+				Name:              "root@agent-b",
+				SessionID:         "agent-b",
+				Interface:         "relaytest2",
+				Route:             "10.20.30.8/24",
+				RouteKey:          "10.20.30.0/24",
+				Decision:          routeDecisionSkipConflict,
+				Alive:             true,
+				AlreadyConfigured: true,
+			},
+		},
+	}
+	meshHealth := []RelayMeshHealth{
+		{
+			AgentID:   3,
+			Name:      "root@agent-c",
+			SessionID: "agent-c",
+			State:     "degraded",
+			Alive:     true,
+			Issues:    []string{"relay auth token is expired"},
+		},
+	}
+
+	plan := chainRepairPlanFromInputs(routePlan, meshHealth, true)
+	if plan.Status != "warning" {
+		t.Fatalf("repair status = %q, want warning", plan.Status)
+	}
+	if plan.Summary.Actions != 4 {
+		t.Fatalf("repair actions = %d, want 4: %+v", plan.Summary.Actions, plan.Actions)
+	}
+	if plan.Summary.ApplySupported != 3 {
+		t.Fatalf("apply supported = %d, want 3", plan.Summary.ApplySupported)
+	}
+	if plan.Summary.Manual != 1 {
+		t.Fatalf("manual = %d, want 1", plan.Summary.Manual)
+	}
+
+	var ensureRoute, startTunnel, pruneRoute, rotateToken bool
+	for _, action := range plan.Actions {
+		switch action.Type {
+		case repairActionEnsureRoute:
+			ensureRoute = action.ApplySupported && action.Interface == "relaytest1"
+		case repairActionStartTunnel:
+			startTunnel = action.ApplySupported && action.AgentID == 1
+		case repairActionPruneDuplicateRoute:
+			pruneRoute = action.ApplySupported && action.Interface == "relaytest2"
+		case repairActionRotateToken:
+			rotateToken = !action.ApplySupported && action.AgentID == 3
+		}
+	}
+	if !ensureRoute || !startTunnel || !pruneRoute || !rotateToken {
+		t.Fatalf("missing repair actions: ensure=%t start=%t prune=%t rotate=%t plan=%+v", ensureRoute, startTunnel, pruneRoute, rotateToken, plan.Actions)
 	}
 }
 

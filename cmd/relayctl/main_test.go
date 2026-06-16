@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -86,5 +87,74 @@ func TestRunChainPlanQueriesPlanEndpoint(t *testing.T) {
 	}
 	if err := runChainPlan(c, []string{"--with-ipv6", "--interface-prefix", "relaytest", "--start"}); err != nil {
 		t.Fatalf("runChainPlan: %v", err)
+	}
+}
+
+func TestRunChainRepairQueriesPlanEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/chain_repair_plan" {
+			t.Fatalf("path = %q, want /api/v1/chain_repair_plan", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("with_ipv6"); got != "true" {
+			t.Fatalf("with_ipv6 = %q, want true", got)
+		}
+		if got := r.URL.Query().Get("interface_prefix"); got != "relaytest" {
+			t.Fatalf("interface_prefix = %q, want relaytest", got)
+		}
+		if got := r.URL.Query().Get("start"); got != "true" {
+			t.Fatalf("start = %q, want true", got)
+		}
+		if got := r.URL.Query().Get("prune_conflicts"); got != "true" {
+			t.Fatalf("prune_conflicts = %q, want true", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"warning","summary":{"actions":1},"actions":[]}`))
+	}))
+	defer server.Close()
+
+	c := &client{
+		baseURL:    server.URL,
+		token:      "test-token",
+		httpClient: server.Client(),
+	}
+	if err := runChainRepair(c, []string{"--with-ipv6", "--interface-prefix", "relaytest", "--start", "--prune-conflicts"}); err != nil {
+		t.Fatalf("runChainRepair: %v", err)
+	}
+}
+
+func TestRunChainRepairApplyPostsRepairRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/chain_repair" {
+			t.Fatalf("path = %q, want /api/v1/chain_repair", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %q, want POST", r.Method)
+		}
+		var req struct {
+			WithIPv6        bool
+			InterfacePrefix string
+			Start           bool
+			PruneConflicts  bool
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if !req.WithIPv6 || req.InterfacePrefix != "relaytest" || !req.Start || !req.PruneConflicts {
+			t.Fatalf("request = %+v, want all chain repair flags set", req)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"warning","summary":{"applied":1},"actions":[]}`))
+	}))
+	defer server.Close()
+
+	c := &client{
+		baseURL:    server.URL,
+		token:      "test-token",
+		httpClient: server.Client(),
+	}
+	if err := runChainRepair(c, []string{"--with-ipv6", "--interface-prefix", "relaytest", "--start", "--prune-conflicts", "--apply"}); err != nil {
+		t.Fatalf("runChainRepair apply: %v", err)
 	}
 }

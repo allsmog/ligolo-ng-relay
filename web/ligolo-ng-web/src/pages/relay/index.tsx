@@ -50,6 +50,7 @@ import useRelayOps from "@/hooks/useRelayOps.ts";
 import { LigoloAgent, LigoloAgentList } from "@/types/agents.ts";
 import {
   ChainNode,
+  ChainRepairAction,
   ChainRouteDecision,
   ChainRouteInfo,
   RelayDoctorRelay,
@@ -487,6 +488,76 @@ function RoutePlanTable({ decisions }: { decisions: ChainRouteDecision[] }) {
   );
 }
 
+function RepairPlanTable({ actions }: { actions: ChainRepairAction[] }) {
+  return (
+    <Table aria-label="Relay repair plan">
+      <TableHeader>
+        <TableColumn className="uppercase">Action</TableColumn>
+        <TableColumn className="uppercase">Agent</TableColumn>
+        <TableColumn className="uppercase">Target</TableColumn>
+        <TableColumn className="uppercase">Apply</TableColumn>
+        <TableColumn className="uppercase">Reason</TableColumn>
+      </TableHeader>
+      <TableBody emptyContent={"No repair actions pending."}>
+        <>
+          {actions.map((action, index) => (
+            <TableRow
+              key={`${action.type}-${action.agent_id ?? "global"}-${action.route ?? index}`}
+            >
+              <TableCell>
+                <div className="flex flex-col gap-1">
+                  <Chip color={severityColor(action.severity)} size="sm" variant="flat">
+                    {action.type}
+                  </Chip>
+                  {action.error ? (
+                    <span className="text-xs text-danger-500">{action.error}</span>
+                  ) : null}
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="flex flex-col">
+                  <p className="text-sm font-semibold">{action.name || "-"}</p>
+                  {action.agent_id ? (
+                    <p className="text-xs text-default-500">
+                      #{action.agent_id} - {action.session_id}
+                    </p>
+                  ) : null}
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="flex flex-col">
+                  <span>{action.route || "-"}</span>
+                  <span className="text-xs text-default-500">
+                    {action.interface || action.route_key || "-"}
+                  </span>
+                </div>
+              </TableCell>
+              <TableCell>
+                <Chip
+                  color={action.apply_supported ? "success" : "default"}
+                  size="sm"
+                  variant="flat"
+                >
+                  {action.applied
+                    ? "applied"
+                    : action.apply_supported
+                      ? "supported"
+                      : "manual"}
+                </Chip>
+              </TableCell>
+              <TableCell>
+                <p className="max-w-[360px] text-sm text-default-500">
+                  {action.reason}
+                </p>
+              </TableCell>
+            </TableRow>
+          ))}
+        </>
+      </TableBody>
+    </Table>
+  );
+}
+
 function RelayStartModal({
   agents,
   isOpen,
@@ -640,6 +711,7 @@ export default function RelayPage() {
   const conflicts = (relayOps?.routes ?? []).filter((route) => route.conflict);
   const routePlan = relayOps?.route_plan;
   const meshHealth = relayOps?.mesh_health ?? [];
+  const repairPlan = relayOps?.repair_plan;
 
   const metricCards = useMemo(() => {
     const summary = relayOps?.summary;
@@ -688,9 +760,9 @@ export default function RelayPage() {
       },
       {
         icon: <Wrench size={16} />,
-        label: "Mesh degraded",
-        value: summary?.mesh_degraded ?? 0,
-        tone: summary?.mesh_degraded ? "warning" : ("success" as ChipColor),
+        label: "Repairs",
+        value: summary?.repair_actions ?? 0,
+        tone: summary?.repair_actions ? "warning" : ("success" as ChipColor),
       },
       {
         icon: <AlertTriangle size={16} />,
@@ -887,6 +959,20 @@ export default function RelayPage() {
           ) : null}
         </div>
         <RoutePlanTable decisions={routePlan?.decisions ?? []} />
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <Wrench size={18} />
+          <h2 className="text-lg font-semibold">Repair plan</h2>
+          {repairPlan ? (
+            <Chip color={statusColor(repairPlan.status)} size="sm" variant="flat">
+              {repairPlan.summary.apply_supported} automatic /{" "}
+              {repairPlan.summary.manual} manual
+            </Chip>
+          ) : null}
+        </div>
+        <RepairPlanTable actions={repairPlan?.actions ?? []} />
       </section>
 
       <section className="flex flex-col gap-3">

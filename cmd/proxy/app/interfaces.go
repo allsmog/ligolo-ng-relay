@@ -593,4 +593,38 @@ func init() {
 			return nil
 		},
 	})
+
+	App.AddCommand(&grumble.Command{
+		Name:      "chain_repair",
+		Help:      "Preview or apply safe relay-chain repair actions",
+		Usage:     "chain_repair [--interface-prefix ligolo] [--with-ipv6] [--start] [--prune-conflicts] [--apply]",
+		HelpGroup: "Relay",
+		Flags: func(f *grumble.Flags) {
+			f.BoolL("with-ipv6", false, "Include IPv6 addresses")
+			f.StringL("interface-prefix", "ligolo", "Interface name prefix for generated interface configs")
+			f.BoolL("start", false, "Include or apply tunnel start actions")
+			f.BoolL("prune-conflicts", false, "Remove configured lower-ranked duplicate routes")
+			f.BoolL("apply", false, "Apply supported repair actions")
+		},
+		Run: func(c *grumble.Context) error {
+			plan := chainRepairPlan(c.Flags.Bool("with-ipv6"), c.Flags.String("interface-prefix"), c.Flags.Bool("start"), c.Flags.Bool("prune-conflicts"))
+			if c.Flags.Bool("apply") {
+				plan = applyChainRepairPlan(c.Flags.Bool("with-ipv6"), c.Flags.String("interface-prefix"), c.Flags.Bool("start"), c.Flags.Bool("prune-conflicts"))
+			}
+			if len(plan.Actions) == 0 {
+				App.Println("No repair actions pending.")
+				return nil
+			}
+
+			t := table.NewWriter()
+			t.SetStyle(table.StyleLight)
+			t.SetTitle("Relay chain repair plan")
+			t.AppendHeader(table.Row{"Type", "Agent ID", "Interface", "Route", "Supported", "Applied", "Reason", "Error"})
+			for _, action := range plan.Actions {
+				t.AppendRow(table.Row{action.Type, action.AgentID, action.Interface, action.Route, action.ApplySupported, action.Applied, action.Reason, action.Error})
+			}
+			App.Println(t.Render())
+			return nil
+		},
+	})
 }

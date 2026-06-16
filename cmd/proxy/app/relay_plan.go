@@ -4,18 +4,32 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/allsmog/ligolo-ng-relay/cmd/proxy/config"
+	"github.com/allsmog/ligolo-ng-relay/pkg/controller"
 	"github.com/allsmog/ligolo-ng-relay/pkg/proxy"
+	"github.com/allsmog/ligolo-ng-relay/pkg/proxy/netinfo"
 )
 
 const (
 	routeDecisionApply        = "apply"
 	routeDecisionSkipConflict = "skip_conflict"
+
+	repairActionEnsureRoute          = "ensure_route"
+	repairActionStartTunnel          = "start_tunnel"
+	repairActionPruneDuplicateRoute  = "prune_duplicate_route"
+	repairActionRotateToken          = "rotate_token"
+	repairActionWaitReconnect        = "wait_reconnect"
+	repairActionInspectPath          = "inspect_path"
+	repairActionRestartRelay         = "restart_relay"
+	repairActionInspectRelayEvents   = "inspect_relay_events"
+	repairActionOperatorIntervention = "operator_intervention"
 )
 
 type ChainRoutePlan struct {
@@ -83,10 +97,313 @@ type RelayMeshHealth struct {
 	RecoveryActions []string `json:"recovery_actions,omitempty"`
 }
 
+type ChainRepairPlan struct {
+	GeneratedAt time.Time              `json:"generated_at"`
+	Status      string                 `json:"status"`
+	Summary     ChainRepairPlanSummary `json:"summary"`
+	Actions     []ChainRepairAction    `json:"actions"`
+}
+
+type ChainRepairPlanSummary struct {
+	Actions        int `json:"actions"`
+	ApplySupported int `json:"apply_supported"`
+	Applied        int `json:"applied"`
+	Failed         int `json:"failed"`
+	RouteEnsures   int `json:"route_ensures"`
+	TunnelStarts   int `json:"tunnel_starts"`
+	Prunes         int `json:"prunes"`
+	Manual         int `json:"manual"`
+}
+
+type ChainRepairAction struct {
+	Type           string `json:"type"`
+	Severity       string `json:"severity"`
+	AgentID        int    `json:"agent_id,omitempty"`
+	Name           string `json:"name,omitempty"`
+	SessionID      string `json:"session_id,omitempty"`
+	Interface      string `json:"interface,omitempty"`
+	Route          string `json:"route,omitempty"`
+	RouteKey       string `json:"route_key,omitempty"`
+	Reason         string `json:"reason"`
+	ApplySupported bool   `json:"apply_supported"`
+	Applied        bool   `json:"applied"`
+	Error          string `json:"error,omitempty"`
+}
+
 func chainRoutePlan(includeIPv6 bool, interfacePrefix string, start bool) ChainRoutePlan {
 	snapshot := chainSnapshot()
 	routes := chainRouteInfos(includeIPv6, interfacePrefix)
 	return chainRoutePlanFromSnapshot(snapshot, routes, start)
+}
+
+func chainRepairPlan(includeIPv6 bool, interfacePrefix string, start bool, pruneConflicts bool) ChainRepairPlan {
+	doctor := relayDoctorReport(includeIPv6, interfacePrefix)
+	routePlan := chainRoutePlanFromSnapshot(doctor.Chain, doctor.Routes, start)
+	meshHealth := relayMeshHealth(doctor)
+	return chainRepairPlanFromInputs(routePlan, meshHealth, pruneConflicts)
+}
+
+func applyChainRepairPlan(includeIPv6 bool, interfacePrefix string, start bool, pruneConflicts bool) ChainRepairPlan {
+	plan := chainRepairPlan(includeIPv6, interfacePrefix, start, pruneConflicts)
+	if len(plan.Actions) == 0 {
+		return plan
+	}
+
+	AgentListMutex.Lock()
+	agents := make(map[int]*controller.LigoloAgent, len(AgentList))
+	for agentID, agent := range AgentList {
+		agents[agentID] = agent
+	}
+	AgentListMutex.Unlock()
+
+	startedAgents := make(map[int]bool)
+	for index := range plan.Actions {
+		action := &plan.Actions[index]
+		if !action.ApplySupported {
+			continue
+		}
+		var err error
+		switch action.Type {
+		case repairActionEnsureRoute:
+			err = ensureRepairRoute(action.Interface, action.Route)
+		case repairActionStartTunnel:
+			if startedAgents[action.AgentID] {
+				action.Applied = true
+				continue
+			}
+			err = startRepairTunnel(agents[action.AgentID], action.Interface)
+			if err == nil {
+				startedAgents[action.AgentID] = true
+			}
+		case repairActionPruneDuplicateRoute:
+			err = pruneRepairRoute(action.Interface, action.Route)
+		default:
+			err = fmt.Errorf("unsupported repair action %q", action.Type)
+		}
+		if err != nil {
+			action.Error = err.Error()
+			continue
+		}
+		action.Applied = true
+	}
+	summarizeRepairPlan(&plan)
+	return plan
+}
+
+func chainRepairPlanFromInputs(routePlan ChainRoutePlan, meshHealth []RelayMeshHealth, pruneConflicts bool) ChainRepairPlan {
+	plan := ChainRepairPlan{
+		GeneratedAt: time.Now(),
+		Status:      "ok",
+	}
+	seenActions := make(map[string]bool)
+
+	for _, decision := range routePlan.Decisions {
+		if decision.Decision == routeDecisionApply {
+			if !decision.AlreadyConfigured {
+				appendRepairAction(&plan, seenActions, ChainRepairAction{
+					Type:           repairActionEnsureRoute,
+					Severity:       "warning",
+					AgentID:        decision.AgentID,
+					Name:           decision.Name,
+					SessionID:      decision.SessionID,
+					Interface:      decision.Interface,
+					Route:          decision.Route,
+					RouteKey:       decision.RouteKey,
+					Reason:         "preferred route is not configured",
+					ApplySupported: true,
+				})
+			}
+			if decision.StartTunnel {
+				appendRepairAction(&plan, seenActions, ChainRepairAction{
+					Type:           repairActionStartTunnel,
+					Severity:       "warning",
+					AgentID:        decision.AgentID,
+					Name:           decision.Name,
+					SessionID:      decision.SessionID,
+					Interface:      decision.Interface,
+					Reason:         "preferred route owner has no running tunnel",
+					ApplySupported: true,
+				})
+			}
+			continue
+		}
+		if pruneConflicts && decision.AlreadyConfigured {
+			appendRepairAction(&plan, seenActions, ChainRepairAction{
+				Type:           repairActionPruneDuplicateRoute,
+				Severity:       "warning",
+				AgentID:        decision.AgentID,
+				Name:           decision.Name,
+				SessionID:      decision.SessionID,
+				Interface:      decision.Interface,
+				Route:          decision.Route,
+				RouteKey:       decision.RouteKey,
+				Reason:         fmt.Sprintf("duplicate route is configured but agent %d is preferred", preferredAgentIDForRoute(routePlan.Decisions, decision.RouteKey)),
+				ApplySupported: true,
+			})
+		}
+	}
+
+	for _, item := range meshHealth {
+		for _, issue := range item.Issues {
+			actionType, reason := repairActionForMeshIssue(item, issue)
+			appendRepairAction(&plan, seenActions, ChainRepairAction{
+				Type:           actionType,
+				Severity:       severityForMeshState(item.State),
+				AgentID:        item.AgentID,
+				Name:           item.Name,
+				SessionID:      item.SessionID,
+				Reason:         reason,
+				ApplySupported: false,
+			})
+		}
+	}
+
+	summarizeRepairPlan(&plan)
+	return plan
+}
+
+func appendRepairAction(plan *ChainRepairPlan, seen map[string]bool, action ChainRepairAction) {
+	key := strings.Join([]string{
+		action.Type,
+		strconv.Itoa(action.AgentID),
+		action.Interface,
+		action.Route,
+		action.Reason,
+	}, "\x00")
+	if seen[key] {
+		return
+	}
+	seen[key] = true
+	plan.Actions = append(plan.Actions, action)
+}
+
+func summarizeRepairPlan(plan *ChainRepairPlan) {
+	plan.Summary = ChainRepairPlanSummary{
+		Actions: len(plan.Actions),
+	}
+	plan.Status = "ok"
+	for _, action := range plan.Actions {
+		if action.ApplySupported {
+			plan.Summary.ApplySupported++
+		} else {
+			plan.Summary.Manual++
+		}
+		if action.Applied {
+			plan.Summary.Applied++
+		}
+		if action.Error != "" {
+			plan.Summary.Failed++
+		}
+		switch action.Type {
+		case repairActionEnsureRoute:
+			plan.Summary.RouteEnsures++
+		case repairActionStartTunnel:
+			plan.Summary.TunnelStarts++
+		case repairActionPruneDuplicateRoute:
+			plan.Summary.Prunes++
+		}
+	}
+	if plan.Summary.Failed > 0 {
+		plan.Status = "error"
+	} else if plan.Summary.Actions > 0 {
+		plan.Status = "warning"
+	}
+}
+
+func repairActionForMeshIssue(item RelayMeshHealth, issue string) (string, string) {
+	switch {
+	case strings.Contains(issue, "offline"):
+		return repairActionWaitReconnect, "wait for matching SessionID reconnect; the proxy restores tunnel, listener, and relay state"
+	case strings.Contains(issue, "health probe"):
+		return repairActionInspectPath, "inspect transport latency or rerun relay ops after the probe cache expires"
+	case strings.Contains(issue, "expired"):
+		return repairActionRotateToken, fmt.Sprintf("rotate relay token for agent %d and redistribute the new downstream command", item.AgentID)
+	case strings.Contains(issue, "fingerprint"):
+		return repairActionRestartRelay, fmt.Sprintf("restart relay on agent %d so downstream agents can pin a valid fingerprint", item.AgentID)
+	case strings.Contains(issue, "relay"):
+		return repairActionInspectRelayEvents, fmt.Sprintf("inspect relay event history for agent %d", item.AgentID)
+	default:
+		return repairActionOperatorIntervention, issue
+	}
+}
+
+func severityForMeshState(state string) string {
+	if state == "offline" {
+		return "critical"
+	}
+	if state == "degraded" {
+		return "warning"
+	}
+	return "info"
+}
+
+func preferredAgentIDForRoute(decisions []ChainRouteDecision, routeKey string) int {
+	for _, decision := range decisions {
+		if decision.RouteKey == routeKey && decision.Preferred {
+			return decision.AgentID
+		}
+	}
+	return 0
+}
+
+func ensureRepairRoute(iface, route string) error {
+	if iface == "" || route == "" {
+		return errors.New("repair route action is missing interface or route")
+	}
+	if err := config.EnsureInterfaceConfig(iface); err != nil {
+		return err
+	}
+	return config.EnsureRouteConfig(iface, route)
+}
+
+func startRepairTunnel(agent *controller.LigoloAgent, iface string) error {
+	if agent == nil {
+		return errors.New("agent is no longer registered")
+	}
+	if !agent.Alive() {
+		return errors.New("agent is offline")
+	}
+	if agent.Running {
+		return nil
+	}
+	if iface == "" {
+		return errors.New("repair tunnel action is missing interface")
+	}
+	return StartTunnel(agent, iface)
+}
+
+func pruneRepairRoute(iface, route string) error {
+	if iface == "" || route == "" {
+		return errors.New("repair prune action is missing interface or route")
+	}
+	var failures []string
+	if cfg := config.GetInterfaceConfig(iface); cfg != nil {
+		if err := config.DeleteRouteConfig(iface, route); err != nil {
+			failures = append(failures, err.Error())
+		}
+	}
+	if netinfo.InterfaceExist(iface) {
+		tun, err := netinfo.GetTunByName(iface)
+		if err != nil {
+			failures = append(failures, err.Error())
+		} else if err := tun.DelRoute(route); err != nil && !isMissingRouteError(err) {
+			failures = append(failures, err.Error())
+		}
+	}
+	if len(failures) > 0 {
+		return errors.New(strings.Join(failures, "; "))
+	}
+	return nil
+}
+
+func isMissingRouteError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "not found") ||
+		strings.Contains(message, "no such process") ||
+		strings.Contains(message, "does not exist")
 }
 
 func chainRoutePlanFromSnapshot(snapshot proxy.ChainSnapshot, routes []ChainRouteInfo, start bool) ChainRoutePlan {

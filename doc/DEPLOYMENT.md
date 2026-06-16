@@ -78,6 +78,23 @@ relayctl -api http://127.0.0.1:8080 -user ligolo -password "$LIGOLO_WEB_PASSWORD
   chain-plan --interface-prefix ligolo --start
 ```
 
+Preview safe route and mesh repair actions:
+
+```sh
+relayctl -api http://127.0.0.1:8080 -user ligolo -password "$LIGOLO_WEB_PASSWORD" \
+  chain-repair --interface-prefix ligolo --start
+```
+
+Apply supported repair actions:
+
+```sh
+relayctl -api http://127.0.0.1:8080 -user ligolo -password "$LIGOLO_WEB_PASSWORD" \
+  chain-repair --interface-prefix ligolo --start --apply
+```
+
+Add `--prune-conflicts` when you want lower-ranked duplicate route entries
+removed from config and active TUN interfaces.
+
 Apply selected routes and start missing tunnels:
 
 ```sh
@@ -93,5 +110,6 @@ relayctl -api http://127.0.0.1:8080 -user ligolo -password "$LIGOLO_WEB_PASSWORD
 ```
 
 `chain-plan` explains duplicate CIDR decisions before anything changes.
-`ops --fail-on-warning` surfaces degraded mesh paths, expired relay tokens,
-route conflicts, and suggested repair actions.
+`chain-repair` turns those decisions into safe route ensures, tunnel starts, and
+optional duplicate-route pruning. `ops --fail-on-warning` surfaces degraded mesh
+paths, expired relay tokens, route conflicts, and suggested repair actions.

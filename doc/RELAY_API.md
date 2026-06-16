@@ -146,6 +146,9 @@ route plan:
     "mesh_degraded": 1,
     "mesh_offline": 0,
     "mesh_repairable": 1,
+    "repair_actions": 2,
+    "repair_automated": 1,
+    "repair_manual": 1,
     "warnings": 1,
     "max_depth": 5
   },
@@ -172,7 +175,21 @@ route plan:
     },
     "decisions": []
   },
-  "mesh_health": []
+  "mesh_health": [],
+  "repair_plan": {
+    "status": "warning",
+    "summary": {
+      "actions": 2,
+      "apply_supported": 1,
+      "applied": 0,
+      "failed": 0,
+      "route_ensures": 1,
+      "tunnel_starts": 0,
+      "prunes": 0,
+      "manual": 1
+    },
+    "actions": []
+  }
 }
 ```
 
@@ -198,6 +215,27 @@ The plan selects one candidate per CIDR. Duplicate candidates are ranked by
 online state, hop depth, cached path RTT, tunnel state, and agent ID; skipped
 candidates include the preferred agent and reason.
 
+Dry-run the repair plan:
+
+```
+curl -fsS 'http://127.0.0.1:8080/api/v1/chain_repair_plan?with_ipv6=false&interface_prefix=ligolo&start=true&prune_conflicts=false' \
+  -H "Authorization: $TOKEN" | jq
+```
+
+Apply supported repair actions:
+
+```
+curl -fsS http://127.0.0.1:8080/api/v1/chain_repair \
+  -H "Authorization: $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"InterfacePrefix":"ligolo","WithIPv6":false,"Start":true,"PruneConflicts":false}'
+```
+
+Supported apply actions are route config ensures and tunnel starts. Set
+`PruneConflicts` to `true` only when lower-ranked duplicate route entries should
+be removed from config and active TUN interfaces. Manual actions such as token
+rotation remain visible in the plan but are not applied automatically.
+
 Configure selected per-agent route/interface entries across the chain:
 
 ```
@@ -220,6 +258,8 @@ relayctl -api http://127.0.0.1:8080 -token "$TOKEN" relay-token-rotate --agent 1
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" relay-token-revoke --agent 1
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-routes
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-plan --interface-prefix ligolo --start
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-repair --interface-prefix ligolo --start
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-repair --interface-prefix ligolo --start --apply
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-autoroute --interface-prefix ligolo
 ```
 
@@ -231,8 +271,8 @@ relay chain is handed to operators or automation.
 
 The Web UI includes a **Relay** page at `/relay`. It polls the same
 `/api/v1/relay/ops` report and exposes summary metrics, topology, mesh health,
-smart route-plan decisions, suggested actions, relay start, and relay token
-rotation or revocation controls.
+smart route-plan decisions, repair actions, suggested actions, relay start, and
+relay token rotation or revocation controls.
 
 Environment variable equivalents are supported:
 

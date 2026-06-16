@@ -587,6 +587,26 @@ func StartLigoloApi() {
 			c.JSON(http.StatusOK, chainRoutePlan(withIPv6, interfacePrefix, start))
 		})
 
+		apiv1.GET("/chain_repair_plan", func(c *gin.Context) {
+			withIPv6, err := strconv.ParseBool(c.DefaultQuery("with_ipv6", "false"))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, inputError)
+				return
+			}
+			start, err := strconv.ParseBool(c.DefaultQuery("start", "false"))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, inputError)
+				return
+			}
+			pruneConflicts, err := strconv.ParseBool(c.DefaultQuery("prune_conflicts", "false"))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, inputError)
+				return
+			}
+			interfacePrefix := c.DefaultQuery("interface_prefix", "ligolo")
+			c.JSON(http.StatusOK, chainRepairPlan(withIPv6, interfacePrefix, start, pruneConflicts))
+		})
+
 		apiv1.POST("/chain_autoroute", func(c *gin.Context) {
 			type ChainAutorouteRequest struct {
 				WithIPv6        bool
@@ -611,6 +631,29 @@ func StartLigoloApi() {
 				"routes":  routes,
 				"plan":    chainRoutePlan(req.WithIPv6, req.InterfacePrefix, req.Start),
 			})
+		})
+
+		apiv1.POST("/chain_repair", func(c *gin.Context) {
+			type ChainRepairRequest struct {
+				WithIPv6        bool
+				InterfacePrefix string
+				Start           bool
+				PruneConflicts  bool
+			}
+			var req ChainRepairRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, inputError)
+				return
+			}
+			if req.InterfacePrefix == "" {
+				req.InterfacePrefix = "ligolo"
+			}
+			plan := applyChainRepairPlan(req.WithIPv6, req.InterfacePrefix, req.Start, req.PruneConflicts)
+			status := http.StatusOK
+			if plan.Status == "error" {
+				status = http.StatusInternalServerError
+			}
+			c.JSON(status, plan)
 		})
 
 		apiv1.POST("/tunnel/:id", func(c *gin.Context) {

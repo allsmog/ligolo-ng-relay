@@ -85,9 +85,9 @@ model and adds recursive relay chains for multi-pivot operator workflows.
   doctor`, token rotation, and revocation.
 - [doc/RELAY_API.md](doc/RELAY_API.md) documents scriptable relay control and
   structured chain status, including the `relayctl` helper.
-- `chain_routes`, `chain_route_plan`, `chain_autoroute`, `relayctl chain-plan`, and
-  `relayctl ops --fail-on-warning` help preview, apply, and gate per-agent
-  routes across direct and relayed sessions.
+- `chain_routes`, `chain_route_plan`, `chain_repair`, `chain_autoroute`,
+  `relayctl chain-plan`, and `relayctl ops --fail-on-warning` help preview,
+  repair, apply, and gate per-agent routes across direct and relayed sessions.
 - The Web UI **Relay** page exposes the same relay operations report with
   topology, mesh health, smart route-plan decisions, suggested actions, relay
   start, and token controls.

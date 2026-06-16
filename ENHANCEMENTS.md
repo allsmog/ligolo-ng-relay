@@ -73,6 +73,7 @@ full chain.
 | `chain_list --json` | Display structured chain status for automation |
 | `chain_routes` | Display route candidates across direct and relayed agents |
 | `chain_plan` / `relayctl chain-plan` | Dry-run smart route decisions before writing config |
+| `chain_repair` / `relayctl chain-repair` | Dry-run or apply safe route repair actions |
 | `chain_autoroute` | Configure per-agent routes/interfaces across the chain |
 | `relayctl ops --fail-on-warning` | Print the relay operations report and fail when health is not `ok` |
 
@@ -89,6 +90,8 @@ full chain.
 | `GET /api/v1/relay/ops` | Get dashboard-ready relay summary counters and suggested actions |
 | `GET /api/v1/chain_routes` | Get route candidates across the chain |
 | `GET /api/v1/chain_route_plan` | Dry-run smart route decisions with conflict resolution |
+| `GET /api/v1/chain_repair_plan` | Dry-run safe route repair and manual recovery actions |
+| `POST /api/v1/chain_repair` | Apply supported repair actions |
 | `POST /api/v1/chain_autoroute` | Configure selected per-agent routes/interfaces |
 
 ### Web UI
@@ -120,6 +123,9 @@ revocation controls.
 - Smart route planning chooses one candidate per CIDR using online state, hop
   depth, path RTT, tunnel state, and agent ID, then explains skipped duplicate
   candidates before autoroute writes config.
+- Repair planning converts route and mesh health into safe automatic actions
+  such as missing-route ensures and tunnel starts, while leaving token rotation
+  and offline reconnects as explicit manual actions.
 - Stopping a relay now closes downstream sessions registered through that relay
   and prunes their chain links.
 - Structured chain status reports online/offline state and cached proxy-to-agent

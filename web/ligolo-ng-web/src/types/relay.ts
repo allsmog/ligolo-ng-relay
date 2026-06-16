@@ -9,6 +9,7 @@ export interface RelayOpsReport {
   relays?: RelayDoctorRelay[];
   route_plan: ChainRoutePlan;
   mesh_health?: RelayMeshHealth[];
+  repair_plan: ChainRepairPlan;
 }
 
 export interface RelayOpsSummary {
@@ -26,6 +27,9 @@ export interface RelayOpsSummary {
   mesh_degraded: number;
   mesh_offline: number;
   mesh_repairable: number;
+  repair_actions: number;
+  repair_automated: number;
+  repair_manual: number;
   warnings: number;
   max_depth: number;
 }
@@ -132,6 +136,39 @@ export interface RelayMeshHealth {
   downstream_count: number;
   issues?: string[];
   recovery_actions?: string[];
+}
+
+export interface ChainRepairPlan {
+  generated_at: string;
+  status: "ok" | "warning" | "error" | string;
+  summary: ChainRepairPlanSummary;
+  actions: ChainRepairAction[];
+}
+
+export interface ChainRepairPlanSummary {
+  actions: number;
+  apply_supported: number;
+  applied: number;
+  failed: number;
+  route_ensures: number;
+  tunnel_starts: number;
+  prunes: number;
+  manual: number;
+}
+
+export interface ChainRepairAction {
+  type: string;
+  severity: "critical" | "warning" | "info" | string;
+  agent_id?: number;
+  name?: string;
+  session_id?: string;
+  interface?: string;
+  route?: string;
+  route_key?: string;
+  reason: string;
+  apply_supported: boolean;
+  applied: boolean;
+  error?: string;
 }
 
 export interface RelayDoctorRelay {

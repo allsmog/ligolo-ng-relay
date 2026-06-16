@@ -104,6 +104,23 @@ relayctl -api http://127.0.0.1:8080 -token "$TOKEN" \
 The plan selects one candidate per CIDR using online state, hop depth, path RTT,
 and agent ID. Duplicate lower-ranked candidates are skipped with a reason.
 
+Preview safe repair actions:
+
+```
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" \
+  chain-repair --interface-prefix ligolo --start
+```
+
+Apply supported repair actions:
+
+```
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" \
+  chain-repair --interface-prefix ligolo --start --apply
+```
+
+Add `--prune-conflicts` only when you want configured lower-ranked duplicate
+routes removed from their interfaces.
+
 Configure selected route/interface entries:
 
 ```

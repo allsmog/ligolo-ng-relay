@@ -461,6 +461,7 @@ type RelayOpsReport struct {
 	Relays      []RelayDoctorRelay  `json:"relays,omitempty"`
 	RoutePlan   ChainRoutePlan      `json:"route_plan"`
 	MeshHealth  []RelayMeshHealth   `json:"mesh_health,omitempty"`
+	RepairPlan  ChainRepairPlan     `json:"repair_plan"`
 }
 
 type RelayOpsSummary struct {
@@ -478,6 +479,9 @@ type RelayOpsSummary struct {
 	MeshDegraded     int `json:"mesh_degraded"`
 	MeshOffline      int `json:"mesh_offline"`
 	MeshRepairable   int `json:"mesh_repairable"`
+	RepairActions    int `json:"repair_actions"`
+	RepairAutomated  int `json:"repair_automated"`
+	RepairManual     int `json:"repair_manual"`
 	Warnings         int `json:"warnings"`
 	MaxDepth         int `json:"max_depth"`
 }
@@ -571,7 +575,8 @@ func relayOpsReport(includeIPv6 bool, interfacePrefix string) RelayOpsReport {
 	doctor := relayDoctorReport(includeIPv6, interfacePrefix)
 	routePlan := chainRoutePlanFromSnapshot(doctor.Chain, doctor.Routes, false)
 	meshHealth := relayMeshHealth(doctor)
-	warnings := relayOpsWarnings(doctor.Warnings, routePlan, meshHealth)
+	repairPlan := chainRepairPlanFromInputs(routePlan, meshHealth, false)
+	warnings := relayOpsWarnings(doctor.Warnings, routePlan, meshHealth, repairPlan)
 	report := RelayOpsReport{
 		GeneratedAt: doctor.GeneratedAt,
 		Status:      "ok",
@@ -581,20 +586,24 @@ func relayOpsReport(includeIPv6 bool, interfacePrefix string) RelayOpsReport {
 		Relays:      doctor.Relays,
 		RoutePlan:   routePlan,
 		MeshHealth:  meshHealth,
+		RepairPlan:  repairPlan,
 	}
-	report.Summary = relayOpsSummary(doctor, routePlan, meshHealth)
+	report.Summary = relayOpsSummary(doctor, routePlan, meshHealth, repairPlan)
 	report.Summary.Warnings = len(warnings)
-	report.Actions = relayOpsActions(doctor, routePlan, meshHealth)
+	report.Actions = relayOpsActions(doctor, routePlan, meshHealth, repairPlan)
 	if len(warnings) > 0 {
 		report.Status = "warning"
 	}
 	return report
 }
 
-func relayOpsWarnings(base []string, routePlan ChainRoutePlan, meshHealth []RelayMeshHealth) []string {
+func relayOpsWarnings(base []string, routePlan ChainRoutePlan, meshHealth []RelayMeshHealth, repairPlan ChainRepairPlan) []string {
 	warnings := append([]string(nil), base...)
 	for _, warning := range routePlan.Warnings {
 		warnings = appendUniqueString(warnings, warning)
+	}
+	if repairPlan.Summary.Actions > 0 {
+		warnings = appendUniqueString(warnings, fmt.Sprintf("repair plan has %d pending action(s)", repairPlan.Summary.Actions))
 	}
 	for _, item := range meshHealth {
 		for _, issue := range item.Issues {
@@ -604,7 +613,7 @@ func relayOpsWarnings(base []string, routePlan ChainRoutePlan, meshHealth []Rela
 	return warnings
 }
 
-func relayOpsSummary(report RelayDoctorReport, routePlan ChainRoutePlan, meshHealth []RelayMeshHealth) RelayOpsSummary {
+func relayOpsSummary(report RelayDoctorReport, routePlan ChainRoutePlan, meshHealth []RelayMeshHealth, repairPlan ChainRepairPlan) RelayOpsSummary {
 	summary := RelayOpsSummary{
 		MaxDepth: len(report.Chain.Agents),
 		Warnings: len(report.Warnings),
@@ -647,10 +656,13 @@ func relayOpsSummary(report RelayDoctorReport, routePlan ChainRoutePlan, meshHea
 	summary.MeshDegraded = meshSummary.Degraded
 	summary.MeshOffline = meshSummary.Offline
 	summary.MeshRepairable = meshSummary.Repairable
+	summary.RepairActions = repairPlan.Summary.Actions
+	summary.RepairAutomated = repairPlan.Summary.ApplySupported
+	summary.RepairManual = repairPlan.Summary.Manual
 	return summary
 }
 
-func relayOpsActions(report RelayDoctorReport, routePlan ChainRoutePlan, meshHealth []RelayMeshHealth) []RelayOpsAction {
+func relayOpsActions(report RelayDoctorReport, routePlan ChainRoutePlan, meshHealth []RelayMeshHealth, repairPlan ChainRepairPlan) []RelayOpsAction {
 	var actions []RelayOpsAction
 	if len(report.Chain.Agents) == 0 {
 		actions = append(actions, RelayOpsAction{
@@ -703,6 +715,13 @@ func relayOpsActions(report RelayDoctorReport, routePlan ChainRoutePlan, meshHea
 			Severity: "warning",
 			Title:    "Review smart route plan",
 			Detail:   fmt.Sprintf("%d duplicate route candidate(s) will be skipped by chain autoroute.", routePlan.Summary.Skipped),
+		})
+	}
+	if repairPlan.Summary.ApplySupported > 0 {
+		actions = append(actions, RelayOpsAction{
+			Severity: "warning",
+			Title:    "Apply relay repair plan",
+			Detail:   fmt.Sprintf("%d safe repair action(s) can be applied automatically.", repairPlan.Summary.ApplySupported),
 		})
 	}
 	for _, item := range meshHealth {

@@ -176,6 +176,12 @@ assert_chain_routes() {
 	echo "$plan" | jq -e '.summary.apply >= 1 and .summary.skipped >= 1' >/dev/null
 	echo "$plan" | jq -e '.decisions[] | select(.session_id == "agent-c" and .hop_depth == 2 and .decision == "skip_conflict" and (.reason | contains("preferred route cost")))' >/dev/null
 
+	repair_plan="$(api_get 'chain_repair_plan?with_ipv6=false&interface_prefix=relaytest&start=false&prune_conflicts=false')"
+	echo "$repair_plan" | jq -e '(.summary.apply_supported >= 1) and ([.actions[] | select(.type == "ensure_route" and .apply_supported == true)] | length >= 1)' >/dev/null
+
+	repair="$(api_post chain_repair '{"InterfacePrefix":"relaytest","WithIPv6":false,"Start":false,"PruneConflicts":false}')"
+	echo "$repair" | jq -e '(.summary.applied >= 1) and ([.actions[] | select(.type == "ensure_route" and .applied == true)] | length >= 1)' >/dev/null
+
 	autoroute="$(api_post chain_autoroute '{"InterfacePrefix":"relaytest","WithIPv6":false,"Start":false}')"
 	echo "$autoroute" | jq -e '.routes[] | select(.session_id == "agent-a" and .hop_depth == 0 and (.interface | startswith("relaytest")))' >/dev/null
 	echo "$autoroute" | jq -e '.plan.decisions[] | select(.session_id == "agent-c" and .decision == "skip_conflict")' >/dev/null
