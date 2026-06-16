@@ -182,3 +182,57 @@ func TestRunChainFailoverQueriesPlanEndpoint(t *testing.T) {
 		t.Fatalf("runChainFailover: %v", err)
 	}
 }
+
+func TestRunChainFailoverApplyPostsRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/chain_failover" {
+			t.Fatalf("path = %q, want /api/v1/chain_failover", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %q, want POST", r.Method)
+		}
+		var req struct {
+			IncludeCommands bool
+			All             bool
+			SessionIDs      []string
+			AgentIDs        []int
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if !req.IncludeCommands || req.All {
+			t.Fatalf("request include/all = %+v, want include commands only", req)
+		}
+		if len(req.SessionIDs) != 1 || req.SessionIDs[0] != "agent-c" {
+			t.Fatalf("session IDs = %+v, want agent-c", req.SessionIDs)
+		}
+		if len(req.AgentIDs) != 2 || req.AgentIDs[0] != 2 || req.AgentIDs[1] != 3 {
+			t.Fatalf("agent IDs = %+v, want 2,3", req.AgentIDs)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"warning","summary":{"applied":1},"recommendations":[]}`))
+	}))
+	defer server.Close()
+
+	c := &client{
+		baseURL:    server.URL,
+		token:      "test-token",
+		httpClient: server.Client(),
+	}
+	err := runChainFailover(c, []string{"--apply", "--include-commands", "--sessions", "agent-c", "--agents", "2,3"})
+	if err != nil {
+		t.Fatalf("runChainFailover apply: %v", err)
+	}
+}
+
+func TestRunChainFailoverApplyRequiresSelector(t *testing.T) {
+	c := &client{}
+	err := runChainFailover(c, []string{"--apply"})
+	if err == nil {
+		t.Fatal("runChainFailover apply succeeded, want selector error")
+	}
+	if !strings.Contains(err.Error(), "requires --all, --sessions, or --agents") {
+		t.Fatalf("error = %v", err)
+	}
+}

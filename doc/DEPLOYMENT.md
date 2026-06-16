@@ -105,6 +105,17 @@ relayctl -api http://127.0.0.1:8080 -user ligolo -password "$LIGOLO_WEB_PASSWORD
 Add `--include-commands` only for trusted operator output that may contain relay
 tokens for downstream reconnects.
 
+Apply selected parent failovers:
+
+```sh
+relayctl -api http://127.0.0.1:8080 -user ligolo -password "$LIGOLO_WEB_PASSWORD" \
+  chain-failover --apply --sessions agent-c
+```
+
+Use `--all` only during controlled maintenance windows. Apply mode updates the
+selected downstream agent's reconnect target, then closes its old session so the
+agent reconnects through the recommended parent.
+
 Apply selected routes and start missing tunnels:
 
 ```sh
@@ -122,6 +133,6 @@ relayctl -api http://127.0.0.1:8080 -user ligolo -password "$LIGOLO_WEB_PASSWORD
 `chain-plan` explains duplicate CIDR decisions before anything changes.
 `chain-repair` turns those decisions into safe route ensures, tunnel starts, and
 optional duplicate-route pruning. `chain-failover` identifies relayed agents
-that have a safer or lower-cost parent. `ops --fail-on-warning` surfaces
-degraded mesh paths, expired relay tokens, route conflicts, failover
-recommendations, and suggested repair actions.
+that have a safer or lower-cost parent and can apply selected reconnect target
+changes. `ops --fail-on-warning` surfaces degraded mesh paths, expired relay
+tokens, route conflicts, failover recommendations, and suggested repair actions.

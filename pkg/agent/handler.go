@@ -24,6 +24,7 @@ import (
 	"net"
 	"os"
 	"os/user"
+	"sync"
 	"syscall"
 	"time"
 
@@ -41,6 +42,9 @@ var listenerMap map[int32]interface{}
 var connTrackID int32
 var listenerID int32
 var sessionID string
+var listenerStateMu sync.Mutex
+var reconnectRequestHandler func(protocol.AgentReconnectRequestPacket) error
+var reconnectRequestHandlerMu sync.RWMutex
 
 func init() {
 	listenerConntrack = make(map[int32]net.Conn)
@@ -51,6 +55,22 @@ func init() {
 	} else {
 		sessionID = hex.EncodeToString(uuid.NodeID())
 	}
+}
+
+func SetReconnectRequestHandler(handler func(protocol.AgentReconnectRequestPacket) error) {
+	reconnectRequestHandlerMu.Lock()
+	defer reconnectRequestHandlerMu.Unlock()
+	reconnectRequestHandler = handler
+}
+
+func handleReconnectRequest(request protocol.AgentReconnectRequestPacket) error {
+	reconnectRequestHandlerMu.RLock()
+	handler := reconnectRequestHandler
+	reconnectRequestHandlerMu.RUnlock()
+	if handler == nil {
+		return errors.New("agent reconnect target updates are not supported")
+	}
+	return handler(request)
 }
 
 // Listener is the base class implementing listener sockets for Ligolo
@@ -74,15 +94,36 @@ func (s *Listener) ListenAndServe(connTrackChan chan int32) error {
 		if err != nil {
 			return err
 		}
+		listenerStateMu.Lock()
 		connTrackID++
-		connTrackChan <- connTrackID
-		listenerConntrack[connTrackID] = conn
+		id := connTrackID
+		listenerConntrack[id] = conn
+		listenerStateMu.Unlock()
+		connTrackChan <- id
 	}
 }
 
 // Close request the main listener to exit
 func (s *Listener) Close() error {
 	return s.Listener.Close()
+}
+
+func CloseListeners() {
+	listenerStateMu.Lock()
+	defer listenerStateMu.Unlock()
+	for id, lis := range listenerMap {
+		switch listener := lis.(type) {
+		case net.Listener:
+			listener.Close()
+		case *net.UDPConn:
+			listener.Close()
+		}
+		delete(listenerMap, id)
+	}
+	for id, conn := range listenerConntrack {
+		conn.Close()
+		delete(listenerConntrack, id)
+	}
 }
 
 // UDPListener is the base class implementing UDP listeners for Ligolo
@@ -205,7 +246,13 @@ func HandleConn(conn net.Conn) {
 		encoder := protocol.NewEncoder(conn)
 
 		var err error
-		if lis, ok := listenerMap[closeRequest.ListenerID]; ok {
+		listenerStateMu.Lock()
+		lis, ok := listenerMap[closeRequest.ListenerID]
+		if ok {
+			delete(listenerMap, closeRequest.ListenerID)
+		}
+		listenerStateMu.Unlock()
+		if ok {
 			if l, ok := lis.(net.Listener); ok {
 				l.Close()
 			}
@@ -246,7 +293,9 @@ func HandleConn(conn net.Conn) {
 				}
 				return
 			}
+			listenerStateMu.Lock()
 			listenerMap[listenerID] = listener.Listener
+			listenerStateMu.Unlock()
 			listenerResponse := protocol.ListenerResponsePacket{
 				ListenerID: listenerID,
 				Err:        false,
@@ -275,7 +324,9 @@ func HandleConn(conn net.Conn) {
 				}
 				return
 			}
+			listenerStateMu.Lock()
 			listenerMap[listenerID] = udplistener.UDPConn
+			listenerStateMu.Unlock()
 			listenerResponse := protocol.ListenerResponsePacket{
 				ListenerID: listenerID,
 				Err:        false,
@@ -312,6 +363,7 @@ func HandleConn(conn net.Conn) {
 				}
 				if err := encoder.Encode(bindResponse); err != nil {
 					logrus.Error(err)
+					return
 				}
 
 				if bindResponse.Err {
@@ -325,7 +377,10 @@ func HandleConn(conn net.Conn) {
 		socketEncDec := protocol.NewEncoderDecoder(conn)
 
 		var sockResponse protocol.ListenerSockResponsePacket
-		if _, ok := listenerConntrack[sockRequest.SockID]; !ok {
+		listenerStateMu.Lock()
+		netConn, ok := listenerConntrack[sockRequest.SockID]
+		listenerStateMu.Unlock()
+		if !ok {
 			// Handle error
 			sockResponse.ErrString = "invalid or unexistant SockID"
 			sockResponse.Err = true
@@ -344,8 +399,6 @@ func HandleConn(conn net.Conn) {
 			logrus.Error(err)
 			return
 		}
-		netConn := listenerConntrack[sockRequest.SockID]
-
 		if err := socketEncDec.Payload.(*protocol.ListenerSocketConnectionReady).Err; err != false {
 			logrus.Debug("Socket relay session failed: error from proxy")
 			netConn.Close()
@@ -356,6 +409,18 @@ func HandleConn(conn net.Conn) {
 
 	case *protocol.AgentKillRequestPacket:
 		os.Exit(0)
+
+	case *protocol.AgentReconnectRequestPacket:
+		reconnectRequest := e.Payload.(*protocol.AgentReconnectRequestPacket)
+		encoder := protocol.NewEncoder(conn)
+		response := protocol.AgentReconnectResponsePacket{}
+		if err := handleReconnectRequest(*reconnectRequest); err != nil {
+			response.Err = true
+			response.ErrString = err.Error()
+		}
+		if err := encoder.Encode(response); err != nil {
+			logrus.Error(err)
+		}
 
 	case *protocol.RelayRequestPacket:
 		relayRequest := e.Payload.(*protocol.RelayRequestPacket)

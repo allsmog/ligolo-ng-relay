@@ -49,6 +49,8 @@ const (
 	MessageRelayNewConnection
 	MessageRelayBridgeRequest
 	MessageRelayEvent
+	MessageAgentReconnectRequest
+	MessageAgentReconnectResponse
 )
 
 const (
@@ -208,6 +210,20 @@ type HostPingResponsePacket struct {
 
 // AgentKillRequestPacket is sent by the proxy to terminate an agent
 type AgentKillRequestPacket struct{}
+
+// AgentReconnectRequestPacket is sent by the proxy to update an agent's
+// reconnect target before the current session is closed.
+type AgentReconnectRequestPacket struct {
+	ConnectAddr       string
+	AcceptFingerprint string
+	RelayToken        string
+}
+
+// AgentReconnectResponsePacket is the response to AgentReconnectRequestPacket.
+type AgentReconnectResponsePacket struct {
+	Err       bool
+	ErrString string
+}
 
 // RelayRequestPacket is sent by the proxy to instruct an agent to start a relay listener
 type RelayRequestPacket struct {

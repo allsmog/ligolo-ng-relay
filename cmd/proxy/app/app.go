@@ -486,6 +486,7 @@ type RelayOpsSummary struct {
 	FailoverRecommendations int `json:"failover_recommendations"`
 	FailoverAtRisk          int `json:"failover_at_risk"`
 	FailoverCommandReady    int `json:"failover_command_ready"`
+	FailoverApplySupported  int `json:"failover_apply_supported"`
 	Warnings                int `json:"warnings"`
 	MaxDepth                int `json:"max_depth"`
 }
@@ -674,6 +675,7 @@ func relayOpsSummary(report RelayDoctorReport, routePlan ChainRoutePlan, meshHea
 	summary.FailoverRecommendations = failoverPlan.Summary.Recommendations
 	summary.FailoverAtRisk = failoverPlan.Summary.AtRisk
 	summary.FailoverCommandReady = failoverPlan.Summary.CommandReady
+	summary.FailoverApplySupported = failoverPlan.Summary.ApplySupported
 	return summary
 }
 
@@ -739,7 +741,13 @@ func relayOpsActions(report RelayDoctorReport, routePlan ChainRoutePlan, meshHea
 			Detail:   fmt.Sprintf("%d safe repair action(s) can be applied automatically.", repairPlan.Summary.ApplySupported),
 		})
 	}
-	if failoverPlan.Summary.Recommendations > 0 {
+	if failoverPlan.Summary.ApplySupported > 0 {
+		actions = append(actions, RelayOpsAction{
+			Severity: "warning",
+			Title:    "Apply relay failover plan",
+			Detail:   fmt.Sprintf("%d relayed agent(s) can reconnect through a better or safer parent.", failoverPlan.Summary.ApplySupported),
+		})
+	} else if failoverPlan.Summary.Recommendations > 0 {
 		actions = append(actions, RelayOpsAction{
 			Severity: "warning",
 			Title:    "Review relay failover plan",
@@ -953,7 +961,7 @@ func RegisterAgent(agent *controller.LigoloAgent) error {
 				logrus.Infof("Restoring listener: [%s] %s => %s", listenerInfo.network, listenerInfo.listenerAddr, listenerInfo.redirectAddr)
 
 				// AddListener will create a new listener on the agent side
-				proxyListener, err := registeredAgents.AddListener(listenerInfo.listenerAddr, listenerInfo.network, listenerInfo.redirectAddr)
+				proxyListener, err := restoreAgentListenerWithRetry(registeredAgents, listenerInfo.listenerAddr, listenerInfo.network, listenerInfo.redirectAddr)
 				if err != nil {
 					logrus.Errorf("Failed to restore listener: %v", err)
 					continue
@@ -1023,6 +1031,31 @@ func RegisterAgent(agent *controller.LigoloAgent) error {
 	AgentCounter++
 	AgentList[AgentCounter] = agent
 	return nil
+}
+
+func restoreAgentListenerWithRetry(agent *controller.LigoloAgent, listenerAddr, network, redirectAddr string) (*proxy.LigoloListener, error) {
+	var lastErr error
+	for attempt := 1; attempt <= 6; attempt++ {
+		proxyListener, err := agent.AddListener(listenerAddr, network, redirectAddr)
+		if err == nil {
+			return proxyListener, nil
+		}
+		lastErr = err
+		if !isTransientListenerRestoreError(err) {
+			break
+		}
+		logrus.Warnf("Listener restore attempt %d for %s failed: %v", attempt, listenerAddr, err)
+		time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
+	}
+	return nil, lastErr
+}
+
+func isTransientListenerRestoreError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "address already in use") || strings.Contains(message, "bind")
 }
 
 func StartTunnel(agent *controller.LigoloAgent, tunName string) error {

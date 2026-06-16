@@ -6,6 +6,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -142,6 +143,9 @@ type ChainFailoverPlanSummary struct {
 	AtRisk          int `json:"at_risk"`
 	Recommendations int `json:"recommendations"`
 	CommandReady    int `json:"command_ready"`
+	ApplySupported  int `json:"apply_supported"`
+	Applied         int `json:"applied"`
+	Failed          int `json:"failed"`
 	NoAlternative   int `json:"no_alternative"`
 }
 
@@ -158,6 +162,9 @@ type ChainFailoverRecommendation struct {
 	RecommendedParent      *ChainFailoverParent  `json:"recommended_parent,omitempty"`
 	Alternatives           []ChainFailoverParent `json:"alternatives,omitempty"`
 	CommandAvailable       bool                  `json:"command_available"`
+	ApplySupported         bool                  `json:"apply_supported"`
+	Applied                bool                  `json:"applied"`
+	Error                  string                `json:"error,omitempty"`
 	ConnectCommand         string                `json:"connect_command,omitempty"`
 }
 
@@ -167,6 +174,7 @@ type ChainFailoverParent struct {
 	SessionID        string     `json:"session_id"`
 	HopDepth         int        `json:"hop_depth"`
 	ListenAddr       string     `json:"listen_addr"`
+	ReconnectAddr    string     `json:"reconnect_addr,omitempty"`
 	Fingerprint      string     `json:"fingerprint,omitempty"`
 	TokenExpiresAt   *time.Time `json:"token_expires_at,omitempty"`
 	TokenExpired     bool       `json:"token_expired"`
@@ -195,6 +203,45 @@ func chainRoutePlan(includeIPv6 bool, interfacePrefix string, start bool) ChainR
 func chainFailoverPlan(includeCommands bool) ChainFailoverPlan {
 	snapshot := chainSnapshot()
 	return chainFailoverPlanFromSnapshot(snapshot, failoverAgentStates(snapshot), includeCommands)
+}
+
+func applyChainFailoverPlan(includeCommands bool, all bool, sessionIDs []string, agentIDs []int) ChainFailoverPlan {
+	plan := chainFailoverPlan(includeCommands)
+	selectedSessions := selectedFailoverSessions(all, sessionIDs, agentIDs, plan.Recommendations)
+
+	AgentListMutex.Lock()
+	agentsBySessionID := make(map[string]*controller.LigoloAgent, len(AgentList))
+	for _, agent := range AgentList {
+		agentsBySessionID[agent.SessionID] = agent
+	}
+	AgentListMutex.Unlock()
+
+	for index := range plan.Recommendations {
+		recommendation := &plan.Recommendations[index]
+		if !selectedSessions[recommendation.SessionID] {
+			continue
+		}
+		if !recommendation.ApplySupported {
+			recommendation.Error = "recommendation is not auto-apply supported"
+			continue
+		}
+		if recommendation.RecommendedParent == nil {
+			recommendation.Error = "recommendation has no parent target"
+			continue
+		}
+		agent := agentsBySessionID[recommendation.SessionID]
+		if agent == nil {
+			recommendation.Error = "agent is not registered"
+			continue
+		}
+		if err := applyChainFailoverRecommendation(agent, *recommendation.RecommendedParent); err != nil {
+			recommendation.Error = err.Error()
+			continue
+		}
+		recommendation.Applied = true
+	}
+	summarizeFailoverPlan(&plan)
+	return plan
 }
 
 func chainFailoverPlanFromSnapshot(snapshot proxy.ChainSnapshot, states map[string]failoverAgentState, includeCommands bool) ChainFailoverPlan {
@@ -260,12 +307,20 @@ func chainFailoverPlanFromSnapshot(snapshot proxy.ChainSnapshot, states map[stri
 			RecommendedParent:      &recommended,
 			Alternatives:           candidates,
 			CommandAvailable:       recommended.CommandAvailable,
+			ApplySupported:         recommended.CommandAvailable && recommended.ReconnectAddr != "",
 		}
 		if includeCommands && recommended.CommandAvailable {
-			recommendation.ConnectCommand = relayConnectCommand(recommended.ListenAddr, recommended.Fingerprint, recommended.authToken)
+			connectAddr := recommended.ReconnectAddr
+			if connectAddr == "" {
+				connectAddr = recommended.ListenAddr
+			}
+			recommendation.ConnectCommand = relayConnectCommand(connectAddr, recommended.Fingerprint, recommended.authToken)
 		}
 		if recommendation.CommandAvailable {
 			plan.Summary.CommandReady++
+		}
+		if recommendation.ApplySupported {
+			plan.Summary.ApplySupported++
 		}
 		plan.Recommendations = append(plan.Recommendations, recommendation)
 	})
@@ -274,6 +329,98 @@ func chainFailoverPlanFromSnapshot(snapshot proxy.ChainSnapshot, states map[stri
 		plan.Status = "warning"
 	}
 	return plan
+}
+
+func selectedFailoverSessions(all bool, sessionIDs []string, agentIDs []int, recommendations []ChainFailoverRecommendation) map[string]bool {
+	selected := make(map[string]bool)
+	agentIDsBySession := make(map[int]string, len(recommendations))
+	for _, recommendation := range recommendations {
+		agentIDsBySession[recommendation.AgentID] = recommendation.SessionID
+		if all {
+			selected[recommendation.SessionID] = true
+		}
+	}
+	for _, sessionID := range sessionIDs {
+		sessionID = strings.TrimSpace(sessionID)
+		if sessionID != "" {
+			selected[sessionID] = true
+		}
+	}
+	for _, agentID := range agentIDs {
+		if sessionID := agentIDsBySession[agentID]; sessionID != "" {
+			selected[sessionID] = true
+		}
+	}
+	return selected
+}
+
+func splitCSVStrings(value string) []string {
+	var values []string
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			values = append(values, item)
+		}
+	}
+	return values
+}
+
+func splitCSVInts(value string) ([]int, error) {
+	var values []int
+	for _, item := range splitCSVStrings(value) {
+		parsed, err := strconv.Atoi(item)
+		if err != nil {
+			return nil, fmt.Errorf("invalid integer %q", item)
+		}
+		values = append(values, parsed)
+	}
+	return values, nil
+}
+
+func applyChainFailoverRecommendation(agent *controller.LigoloAgent, parent ChainFailoverParent) error {
+	if parent.ReconnectAddr == "" {
+		return fmt.Errorf("recommended parent does not expose a concrete reconnect address")
+	}
+	if parent.Fingerprint == "" || parent.authToken == "" {
+		return fmt.Errorf("recommended parent is missing reconnect credentials")
+	}
+	if err := agent.UpdateReconnectTarget(parent.ReconnectAddr, parent.Fingerprint, parent.authToken); err != nil {
+		return err
+	}
+	AgentListMutex.Lock()
+	if agent.Running {
+		select {
+		case agent.CloseChan <- true:
+		default:
+		}
+		agent.Running = false
+	}
+	session := agent.Session
+	AgentListMutex.Unlock()
+	if session != nil {
+		session.Close()
+	}
+	ChainMgr.RemoveAgent(agent.SessionID)
+	return nil
+}
+
+func summarizeFailoverPlan(plan *ChainFailoverPlan) {
+	plan.Summary.Applied = 0
+	plan.Summary.Failed = 0
+	plan.Status = "ok"
+	for _, recommendation := range plan.Recommendations {
+		if recommendation.Applied {
+			plan.Summary.Applied++
+		}
+		if recommendation.Error != "" {
+			plan.Summary.Failed++
+		}
+	}
+	if plan.Summary.Failed > 0 {
+		plan.Status = "error"
+	} else if plan.Summary.AtRisk > 0 || plan.Summary.Recommendations > 0 {
+		plan.Status = "warning"
+	}
 }
 
 func failoverAgentStates(snapshot proxy.ChainSnapshot) map[string]failoverAgentState {
@@ -334,6 +481,7 @@ func failoverParentFromState(state failoverAgentState) ChainFailoverParent {
 		SessionID:        node.SessionID,
 		HopDepth:         node.HopDepth,
 		ListenAddr:       node.RelayListenAddr,
+		ReconnectAddr:    relayReconnectAddr(node),
 		Fingerprint:      node.RelayCertFingerprint,
 		TokenExpiresAt:   node.RelayTokenExpiresAt,
 		TokenExpired:     node.RelayTokenExpired,
@@ -361,6 +509,21 @@ func failoverParentFromState(state failoverAgentState) ChainFailoverParent {
 		parent.BlockedReason = "relay token is not available in proxy memory"
 	}
 	return parent
+}
+
+func relayReconnectAddr(node proxy.ChainNode) string {
+	host, port, err := net.SplitHostPort(node.RelayListenAddr)
+	if err != nil {
+		return node.RelayListenAddr
+	}
+	if host != "" && host != "0.0.0.0" && host != "::" {
+		return net.JoinHostPort(host, port)
+	}
+	remoteHost, _, err := net.SplitHostPort(node.RemoteAddr)
+	if err != nil || remoteHost == "" {
+		return ""
+	}
+	return net.JoinHostPort(remoteHost, port)
 }
 
 func failoverParentIssues(state failoverAgentState) []string {

@@ -34,6 +34,7 @@ export interface RelayOpsSummary {
   failover_recommendations: number;
   failover_at_risk: number;
   failover_command_ready: number;
+  failover_apply_supported: number;
   warnings: number;
   max_depth: number;
 }
@@ -187,6 +188,9 @@ export interface ChainFailoverPlanSummary {
   at_risk: number;
   recommendations: number;
   command_ready: number;
+  apply_supported: number;
+  applied: number;
+  failed: number;
   no_alternative: number;
 }
 
@@ -203,6 +207,9 @@ export interface ChainFailoverRecommendation {
   recommended_parent?: ChainFailoverParent;
   alternatives?: ChainFailoverParent[];
   command_available: boolean;
+  apply_supported: boolean;
+  applied: boolean;
+  error?: string;
   connect_command?: string;
 }
 
@@ -212,6 +219,7 @@ export interface ChainFailoverParent {
   session_id: string;
   hop_depth: number;
   listen_addr: string;
+  reconnect_addr?: string;
   fingerprint?: string;
   token_expires_at?: string;
   token_expired: boolean;

@@ -616,6 +616,30 @@ func StartLigoloApi() {
 			c.JSON(http.StatusOK, chainFailoverPlan(includeCommands))
 		})
 
+		apiv1.POST("/chain_failover", func(c *gin.Context) {
+			type ChainFailoverRequest struct {
+				IncludeCommands bool
+				All             bool
+				SessionIDs      []string
+				AgentIDs        []int
+			}
+			var req ChainFailoverRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, inputError)
+				return
+			}
+			if !req.All && len(req.SessionIDs) == 0 && len(req.AgentIDs) == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "chain failover apply requires All, SessionIDs, or AgentIDs"})
+				return
+			}
+			plan := applyChainFailoverPlan(req.IncludeCommands, req.All, req.SessionIDs, req.AgentIDs)
+			status := http.StatusOK
+			if plan.Status == "error" {
+				status = http.StatusInternalServerError
+			}
+			c.JSON(status, plan)
+		})
+
 		apiv1.POST("/chain_autoroute", func(c *gin.Context) {
 			type ChainAutorouteRequest struct {
 				WithIPv6        bool

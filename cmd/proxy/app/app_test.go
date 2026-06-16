@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	agentpkg "github.com/allsmog/ligolo-ng-relay/pkg/agent"
 	"github.com/allsmog/ligolo-ng-relay/pkg/controller"
 	"github.com/allsmog/ligolo-ng-relay/pkg/protocol"
 	"github.com/allsmog/ligolo-ng-relay/pkg/proxy"
@@ -340,7 +341,7 @@ func TestChainFailoverPlanRecommendsBetterParent(t *testing.T) {
 		SessionID:            "agent-a",
 		Session:              testYamuxSession(t),
 		RelayActive:          true,
-		RelayListenAddr:      "0.0.0.0:11602",
+		RelayListenAddr:      "127.0.0.1:11602",
 		RelayCertFingerprint: "FINGERPRINTA",
 		RelayAuthToken:       "token-a",
 		RelayTokenExpiresAt:  expires,
@@ -385,11 +386,87 @@ func TestChainFailoverPlanRecommendsBetterParent(t *testing.T) {
 	if !rec.CommandAvailable {
 		t.Fatalf("command should be available: %+v", rec)
 	}
+	if !rec.ApplySupported {
+		t.Fatalf("apply should be supported: %+v", rec)
+	}
+	if rec.RecommendedParent.ReconnectAddr != "127.0.0.1:11602" {
+		t.Fatalf("reconnect addr = %q, want 127.0.0.1:11602", rec.RecommendedParent.ReconnectAddr)
+	}
 	if !strings.Contains(rec.ConnectCommand, "-relay-token token-a") {
 		t.Fatalf("connect command missing token: %s", rec.ConnectCommand)
 	}
 	if !strings.Contains(rec.ConnectCommand, "-accept-fingerprint FINGERPRINTA") {
 		t.Fatalf("connect command missing fingerprint: %s", rec.ConnectCommand)
+	}
+}
+
+func TestApplyChainFailoverPlanUpdatesReconnectTarget(t *testing.T) {
+	resetAppTestState(t)
+
+	reconnectRequests := make(chan protocol.AgentReconnectRequestPacket, 1)
+	agentpkg.SetReconnectRequestHandler(func(request protocol.AgentReconnectRequestPacket) error {
+		reconnectRequests <- request
+		return nil
+	})
+	t.Cleanup(func() {
+		agentpkg.SetReconnectRequestHandler(nil)
+	})
+
+	expires := time.Now().Add(time.Hour)
+	AgentList[1] = &controller.LigoloAgent{
+		Name:                 "root@agent-a",
+		SessionID:            "agent-a",
+		Session:              testYamuxSession(t),
+		RelayActive:          true,
+		RelayListenAddr:      "127.0.0.1:11602",
+		RelayCertFingerprint: "FINGERPRINTA",
+		RelayAuthToken:       "token-a",
+		RelayTokenExpiresAt:  expires,
+	}
+	AgentList[2] = &controller.LigoloAgent{
+		Name:                 "root@agent-b",
+		SessionID:            "agent-b",
+		Session:              testYamuxSession(t),
+		RelayActive:          true,
+		RelayListenAddr:      "127.0.0.1:11603",
+		RelayCertFingerprint: "FINGERPRINTB",
+		RelayAuthToken:       "token-b",
+		RelayTokenExpiresAt:  expires,
+	}
+	AgentList[3] = &controller.LigoloAgent{
+		Name:      "root@agent-c",
+		SessionID: "agent-c",
+		Session:   testYamuxSessionWithAgentHandler(t),
+	}
+	ChainMgr.AddLink("agent-b", "agent-c")
+	cachePathRTT("agent-a", 10)
+	cachePathRTT("agent-b", 50)
+	cachePathRTT("agent-c", 70)
+
+	plan := applyChainFailoverPlan(false, false, []string{"agent-c"}, nil)
+	if plan.Status != "warning" {
+		t.Fatalf("failover status = %q, want warning", plan.Status)
+	}
+	if plan.Summary.Applied != 1 || plan.Summary.Failed != 0 {
+		t.Fatalf("summary applied/failed = %d/%d, want 1/0", plan.Summary.Applied, plan.Summary.Failed)
+	}
+	if len(plan.Recommendations) != 1 || !plan.Recommendations[0].Applied {
+		t.Fatalf("recommendation not applied: %+v", plan.Recommendations)
+	}
+
+	select {
+	case request := <-reconnectRequests:
+		if request.ConnectAddr != "127.0.0.1:11602" {
+			t.Fatalf("connect addr = %q, want 127.0.0.1:11602", request.ConnectAddr)
+		}
+		if request.AcceptFingerprint != "FINGERPRINTA" {
+			t.Fatalf("fingerprint = %q, want FINGERPRINTA", request.AcceptFingerprint)
+		}
+		if request.RelayToken != "token-a" {
+			t.Fatalf("relay token = %q, want token-a", request.RelayToken)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for reconnect request")
 	}
 }
 
@@ -436,6 +513,39 @@ func testYamuxSession(t *testing.T) *yamux.Session {
 		serverSession.Close()
 		clientConn.Close()
 		serverConn.Close()
+	})
+	return clientSession
+}
+
+func testYamuxSessionWithAgentHandler(t *testing.T) *yamux.Session {
+	t.Helper()
+
+	clientConn, serverConn := net.Pipe()
+	serverSession, err := yamux.Server(serverConn, yamux.DefaultConfig())
+	if err != nil {
+		t.Fatalf("yamux server: %v", err)
+	}
+	clientSession, err := yamux.Client(clientConn, yamux.DefaultConfig())
+	if err != nil {
+		t.Fatalf("yamux client: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := serverSession.Accept()
+			if err != nil {
+				return
+			}
+			go agentpkg.HandleConn(conn)
+		}
+	}()
+	t.Cleanup(func() {
+		clientSession.Close()
+		serverSession.Close()
+		clientConn.Close()
+		serverConn.Close()
+		<-done
 	})
 	return clientSession
 }

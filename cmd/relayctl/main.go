@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -102,7 +103,7 @@ func usage() {
   relayctl [global flags] chain-routes [--with-ipv6] [--interface-prefix ligolo]
   relayctl [global flags] chain-plan [--with-ipv6] [--interface-prefix ligolo] [--start]
   relayctl [global flags] chain-repair [--with-ipv6] [--interface-prefix ligolo] [--start] [--prune-conflicts] [--apply]
-  relayctl [global flags] chain-failover [--include-commands]
+  relayctl [global flags] chain-failover [--include-commands] [--apply] [--all] [--sessions session-a,session-b] [--agents 2,3]
   relayctl [global flags] chain-autoroute [--with-ipv6] [--interface-prefix ligolo] [--start]
   relayctl [global flags] relay-start --agent id --listen 127.0.0.1:11602 [--relay-token token] [--token-ttl 8h] [--one-time-token]
   relayctl [global flags] relay-stop --agent id
@@ -223,12 +224,55 @@ func runChainRepair(c *client, args []string) error {
 func runChainFailover(c *client, args []string) error {
 	fs := flag.NewFlagSet("chain-failover", flag.ExitOnError)
 	includeCommands := fs.Bool("include-commands", false, "include downstream reconnect commands with relay tokens")
+	apply := fs.Bool("apply", false, "apply selected failover recommendations")
+	all := fs.Bool("all", false, "apply every supported failover recommendation")
+	sessions := fs.String("sessions", "", "comma-separated SessionIDs to fail over")
+	agents := fs.String("agents", "", "comma-separated agent IDs to fail over")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *apply {
+		sessionIDs := parseCSVStrings(*sessions)
+		agentIDs, err := parseCSVInts(*agents)
+		if err != nil {
+			return err
+		}
+		if !*all && len(sessionIDs) == 0 && len(agentIDs) == 0 {
+			return errors.New("chain-failover --apply requires --all, --sessions, or --agents")
+		}
+		return c.print("POST", "/api/v1/chain_failover", map[string]any{
+			"IncludeCommands": *includeCommands,
+			"All":             *all,
+			"SessionIDs":      sessionIDs,
+			"AgentIDs":        agentIDs,
+		})
 	}
 	q := url.Values{}
 	q.Set("include_commands", fmt.Sprintf("%t", *includeCommands))
 	return c.print("GET", "/api/v1/chain_failover_plan?"+q.Encode(), nil)
+}
+
+func parseCSVStrings(value string) []string {
+	var values []string
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			values = append(values, item)
+		}
+	}
+	return values
+}
+
+func parseCSVInts(value string) ([]int, error) {
+	var values []int
+	for _, item := range parseCSVStrings(value) {
+		parsed, err := strconv.Atoi(item)
+		if err != nil {
+			return nil, fmt.Errorf("invalid integer %q", item)
+		}
+		values = append(values, parsed)
+	}
+	return values, nil
 }
 
 func runChainAutoroute(c *client, args []string) error {

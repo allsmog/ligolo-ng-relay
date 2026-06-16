@@ -570,7 +570,7 @@ function FailoverPlanTable({
         <TableColumn className="uppercase">Agent</TableColumn>
         <TableColumn className="uppercase">Current Parent</TableColumn>
         <TableColumn className="uppercase">Recommended Parent</TableColumn>
-        <TableColumn className="uppercase">Command</TableColumn>
+        <TableColumn className="uppercase">Apply</TableColumn>
         <TableColumn className="uppercase">Reason</TableColumn>
       </TableHeader>
       <TableBody emptyContent={"No failover recommendations."}>
@@ -609,6 +609,9 @@ function FailoverPlanTable({
                     <span className="text-xs text-default-500">
                       {recommendation.recommended_parent.path_rtt_ms ?? "-"} ms
                     </span>
+                    <span className="text-xs text-default-500">
+                      {recommendation.recommended_parent.reconnect_addr ?? "manual"}
+                    </span>
                   </div>
                 ) : (
                   <span className="text-default-400">-</span>
@@ -616,12 +619,23 @@ function FailoverPlanTable({
               </TableCell>
               <TableCell>
                 <Chip
-                  color={recommendation.command_available ? "success" : "default"}
+                  color={recommendation.apply_supported ? "success" : "default"}
                   size="sm"
                   variant="flat"
                 >
-                  {recommendation.command_available ? "available" : "manual"}
+                  {recommendation.applied
+                    ? "applied"
+                    : recommendation.apply_supported
+                      ? "supported"
+                      : recommendation.command_available
+                        ? "command"
+                        : "manual"}
                 </Chip>
+                {recommendation.error ? (
+                  <p className="mt-1 text-xs text-danger-500">
+                    {recommendation.error}
+                  </p>
+                ) : null}
               </TableCell>
               <TableCell>
                 <p className="max-w-[360px] text-sm text-default-500">
@@ -1069,7 +1083,7 @@ export default function RelayPage() {
           {failoverPlan ? (
             <Chip color={statusColor(failoverPlan.status)} size="sm" variant="flat">
               {failoverPlan.summary.recommendations} recommended /{" "}
-              {failoverPlan.summary.command_ready} ready
+              {failoverPlan.summary.apply_supported} apply-ready
             </Chip>
           ) : null}
         </div>

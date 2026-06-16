@@ -130,6 +130,16 @@ relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-failover
 Add `--include-commands` only when the output should include downstream
 reconnect commands with relay tokens.
 
+Apply a selected failover recommendation:
+
+```
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" \
+  chain-failover --apply --sessions <downstream-session-id>
+```
+
+Use `--all` only when every supported recommendation should be applied. Apply
+mode requires downstream agents to keep reconnect enabled, which is the default.
+
 Configure selected route/interface entries:
 
 ```
@@ -169,4 +179,4 @@ make relay-test
 
 The lab verifies `Proxy -> Agent A relay -> Agent B relay -> Agent C`, route
 automation, listener traffic through Agent C, idle traffic recovery, descendant
-cleanup, failover recommendations, and `relayctl`.
+cleanup, failover recommendations and apply, and `relayctl`.

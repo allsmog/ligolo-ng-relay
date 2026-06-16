@@ -149,6 +149,37 @@ func (la *LigoloAgent) Kill() error {
 	return nil
 }
 
+func (la *LigoloAgent) UpdateReconnectTarget(connectAddr, acceptFingerprint, relayToken string) error {
+	if la.Session == nil || la.Session.IsClosed() {
+		return fmt.Errorf("agent session is not connected")
+	}
+	conn, err := la.Session.Open()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	ligoloProtocol := protocol.NewEncoderDecoder(conn)
+	if err := ligoloProtocol.Encode(protocol.AgentReconnectRequestPacket{
+		ConnectAddr:       connectAddr,
+		AcceptFingerprint: acceptFingerprint,
+		RelayToken:        relayToken,
+	}); err != nil {
+		return err
+	}
+	if err := ligoloProtocol.Decode(); err != nil {
+		return err
+	}
+	response, ok := ligoloProtocol.Payload.(*protocol.AgentReconnectResponsePacket)
+	if !ok {
+		return fmt.Errorf("unexpected reconnect response type")
+	}
+	if response.Err {
+		return fmt.Errorf("agent reconnect error: %s", response.ErrString)
+	}
+	return nil
+}
+
 func (la *LigoloAgent) AddListener(addr string, network string, to string) (*proxy.LigoloListener, error) {
 	if _, _, err := net.SplitHostPort(addr); err != nil {
 		return nil, fmt.Errorf("invalid listener addr: %v", err)

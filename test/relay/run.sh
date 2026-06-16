@@ -112,7 +112,7 @@ start_downstream_agent() {
 	fingerprint="$4"
 	auth_token="$5"
 	docker_cmd run -d --name "$container_name" --network "$NET" -e LIGOLO_SESSION_ID="$session_id" "$IMAGE" \
-		ligolo-agent -connect "$connect_addr" -accept-fingerprint "$fingerprint" -relay-token "$auth_token" -reconnect=false >/dev/null
+		ligolo-agent -connect "$connect_addr" -accept-fingerprint "$fingerprint" -relay-token "$auth_token" -reconnect=true -reconnect-delay 1 -reconnect-timeout 30 >/dev/null
 }
 
 wait_chain() {
@@ -130,15 +130,11 @@ wait_chain() {
 	return 1
 }
 
-wait_no_alive_b_or_c() {
-	wait_chain "agent B/C did not drop from live chain state" '[.agents[] | recurse(.children[]?) | select((.session_id == "agent-b" or .session_id == "agent-c") and .alive == true)] | length == 0'
-}
-
 start_proxy_http() {
 	docker_cmd exec "$PROXY" sh -c "mkdir -p /tmp/www && printf '%s\n' '$HTTP_PAYLOAD' > /tmp/www/index.html"
 	docker_cmd exec -d "$PROXY" /bin/busybox httpd -f -p "127.0.0.1:$HTTP_PORT" -h /tmp/www
 	for i in $(seq 1 30); do
-		body="$(docker_cmd exec "$PROXY" /bin/busybox wget -qO- "http://127.0.0.1:$HTTP_PORT/" 2>/dev/null || true)"
+		body="$(docker_cmd exec "$PROXY" /bin/busybox timeout 2 /bin/busybox wget -qO- "http://127.0.0.1:$HTTP_PORT/" 2>/dev/null || true)"
 		body="$(printf '%s' "$body" | tr -d '\r\n')"
 		if [ "$body" = "$HTTP_PAYLOAD" ]; then
 			return 0
@@ -157,7 +153,7 @@ create_agent_c_listener() {
 verify_agent_c_listener() {
 	description="$1"
 	for i in $(seq 1 50); do
-		body="$(docker_cmd exec "$AGENTC" /bin/busybox wget -qO- "http://127.0.0.1:$LISTENER_PORT/" 2>/dev/null || true)"
+		body="$(docker_cmd exec "$AGENTC" /bin/busybox timeout 2 /bin/busybox wget -qO- "http://127.0.0.1:$LISTENER_PORT/" 2>/dev/null || true)"
 		body="$(printf '%s' "$body" | tr -d '\r\n')"
 		if [ "$body" = "$HTTP_PAYLOAD" ]; then
 			return 0
@@ -198,6 +194,15 @@ assert_agent_c_chain() {
 		| select(.session_id == "agent-b" and .parent_session_id == "agent-a" and .hop_depth == 1 and .relay_active == true and (.path_rtt_ms | type == "number"))
 		| .children[]?
 		| select(.session_id == "agent-c" and .parent_session_id == "agent-b" and .hop_depth == 2 and (.path_rtt_ms | type == "number"))
+	'
+}
+
+assert_agent_c_failed_over_to_a() {
+	wait_chain "agent C did not fail over to agent A" '
+		.agents[]
+		| select(.session_id == "agent-a" and .relay_active == true and (.path_rtt_ms | type == "number"))
+		| .children[]?
+		| select(.session_id == "agent-c" and .parent_session_id == "agent-a" and .hop_depth == 1 and (.path_rtt_ms | type == "number"))
 	'
 }
 
@@ -287,14 +292,24 @@ AGENT_C_ID="$(wait_for_agent agent-c)"
 assert_agent_c_chain
 verify_agent_c_listener "restored agent C listener did not relay after reconnect"
 
-echo "== kill middle agent B and verify chain cleanup =="
+echo "== apply failover for agent C to agent A =="
+failover_apply="$(api_post chain_failover '{"SessionIDs":["agent-c"],"IncludeCommands":true}')"
+echo "$failover_apply" | jq -e '(.summary.applied == 1) and ([.recommendations[] | select(.session_id == "agent-c" and .recommended_parent.session_id == "agent-a" and .applied == true and .apply_supported == true and (.connect_command | contains("-relay-token")))] | length == 1)' >/dev/null
+assert_agent_c_failed_over_to_a
+verify_agent_c_listener "failed-over agent C listener did not relay after reconnect"
+
+echo "== kill middle agent B and verify agent C stays on failover path =="
 docker_cmd rm -f "$AGENTB" >/dev/null
-wait_no_alive_b_or_c
+wait_chain "agent C did not remain live after agent B was killed" '
+	([.agents[] | recurse(.children[]?) | select(.session_id == "agent-b" and .alive == true)] | length == 0)
+	and
+	(any(.agents[] | recurse(.children[]?); .session_id == "agent-c" and .parent_session_id == "agent-a" and .alive == true))
+'
 
 echo "== verify relayctl client =="
 docker_cmd run --rm --network "$NET" "$IMAGE" \
 	relayctl -api http://proxy:8080 -user relay -password relay-pass chains |
-	jq -e '[.agents[] | recurse(.children[]?) | select((.session_id == "agent-b" or .session_id == "agent-c") and .alive == true)] | length == 0' >/dev/null
+	jq -e '([.agents[] | recurse(.children[]?) | select(.session_id == "agent-b" and .alive == true)] | length == 0) and (any(.agents[] | recurse(.children[]?); .session_id == "agent-c" and .parent_session_id == "agent-a" and .alive == true))' >/dev/null
 
 echo "== verify relayctl doctor =="
 docker_cmd run --rm --network "$NET" "$IMAGE" \

@@ -109,6 +109,28 @@ func TestRelayPackets(t *testing.T) {
 					pkt.AtUnix == 12345
 			},
 		},
+		{
+			name: "AgentReconnectRequest",
+			packet: AgentReconnectRequestPacket{
+				ConnectAddr:       "10.0.0.5:11602",
+				AcceptFingerprint: "AABBCCDD",
+				RelayToken:        "relay-token",
+			},
+			checker: func(p interface{}) bool {
+				pkt := p.(*AgentReconnectRequestPacket)
+				return pkt.ConnectAddr == "10.0.0.5:11602" &&
+					pkt.AcceptFingerprint == "AABBCCDD" &&
+					pkt.RelayToken == "relay-token"
+			},
+		},
+		{
+			name:   "AgentReconnectResponse",
+			packet: AgentReconnectResponsePacket{Err: true, ErrString: "invalid reconnect target"},
+			checker: func(p interface{}) bool {
+				pkt := p.(*AgentReconnectResponsePacket)
+				return pkt.Err && pkt.ErrString == "invalid reconnect target"
+			},
+		},
 	}
 
 	for _, tt := range tests {

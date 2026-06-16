@@ -152,6 +152,7 @@ route, repair, and failover plans:
     "failover_recommendations": 1,
     "failover_at_risk": 0,
     "failover_command_ready": 1,
+    "failover_apply_supported": 1,
     "warnings": 1,
     "max_depth": 5
   },
@@ -200,6 +201,9 @@ route, repair, and failover plans:
       "at_risk": 0,
       "recommendations": 1,
       "command_ready": 1,
+      "apply_supported": 1,
+      "applied": 0,
+      "failed": 0,
       "no_alternative": 0
     },
     "recommendations": []
@@ -265,6 +269,21 @@ alternate has a lower failover cost. Set `include_commands=true` only for
 trusted output; when a proxy-held relay token is available, recommendations can
 include downstream `agent -connect ... -relay-token ...` commands.
 
+Apply selected relay parent failover recommendations:
+
+```
+curl -fsS http://127.0.0.1:8080/api/v1/chain_failover \
+  -H "Authorization: $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"SessionIDs":["agent-c"],"IncludeCommands":true}'
+```
+
+Apply requires `All`, `SessionIDs`, or `AgentIDs` in the request body. Supported
+apply actions send a reconnect target update to the selected downstream agent,
+then close its old session so its normal reconnect loop joins through the
+recommended relay parent. This requires reconnect to be enabled on the agent
+process, which is the default.
+
 Configure selected per-agent route/interface entries across the chain:
 
 ```
@@ -291,6 +310,8 @@ relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-repair --interface-pre
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-repair --interface-prefix ligolo --start --apply
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-failover
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-failover --include-commands
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-failover --apply --sessions agent-c
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-failover --apply --all
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-autoroute --interface-prefix ligolo
 ```
 

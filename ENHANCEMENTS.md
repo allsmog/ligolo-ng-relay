@@ -74,7 +74,7 @@ full chain.
 | `chain_routes` | Display route candidates across direct and relayed agents |
 | `chain_plan` / `relayctl chain-plan` | Dry-run smart route decisions before writing config |
 | `chain_repair` / `relayctl chain-repair` | Dry-run or apply safe route repair actions |
-| `chain_failover` / `relayctl chain-failover` | Show safer or lower-cost relay parent recommendations |
+| `chain_failover` / `relayctl chain-failover` | Dry-run or apply safer relay parent recommendations |
 | `chain_autoroute` | Configure per-agent routes/interfaces across the chain |
 | `relayctl ops --fail-on-warning` | Print the relay operations report and fail when health is not `ok` |
 
@@ -94,6 +94,7 @@ full chain.
 | `GET /api/v1/chain_repair_plan` | Dry-run safe route repair and manual recovery actions |
 | `POST /api/v1/chain_repair` | Apply supported repair actions |
 | `GET /api/v1/chain_failover_plan` | Dry-run relay parent failover recommendations |
+| `POST /api/v1/chain_failover` | Apply selected relay parent failover recommendations |
 | `POST /api/v1/chain_autoroute` | Configure selected per-agent routes/interfaces |
 
 ### Web UI
@@ -131,16 +132,19 @@ start, and relay token rotation or revocation controls.
 - Failover planning scores alternate relay parents by online state, relay
   readiness, token state, hop depth, path RTT, and downstream fanout. Reconnect
   commands are emitted only when explicitly requested with `--include-commands`
-  or `include_commands=true`.
+  or `include_commands=true`; apply mode updates selected agents' reconnect
+  targets and closes their old sessions so the existing reconnect loop can join
+  through the recommended parent.
 - Stopping a relay now closes downstream sessions registered through that relay
   and prunes their chain links.
 - Structured chain status reports online/offline state and cached proxy-to-agent
   `path_rtt_ms`, relay fingerprint, and token expiry metadata when available.
 
 **Implementation:** new protocol messages (`RelayRequest`, `RelayResponse`,
-`RelayNewConnection`, `RelayBridgeRequest`, `RelayEvent`), an agent-side relay
-listener with self-signed TLS, and a `ChainManager` that tracks topology,
-enforces depth limits, and detects circular chains.
+`RelayNewConnection`, `RelayBridgeRequest`, `RelayEvent`,
+`AgentReconnectRequest`, `AgentReconnectResponse`), an agent-side relay listener
+with self-signed TLS, and a `ChainManager` that tracks topology, enforces depth
+limits, and detects circular chains.
 
 ---
 

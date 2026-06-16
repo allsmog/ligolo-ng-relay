@@ -631,14 +631,31 @@ func init() {
 	App.AddCommand(&grumble.Command{
 		Name:      "chain_failover",
 		Help:      "Show relay parent failover recommendations",
-		Usage:     "chain_failover [--include-commands]",
+		Usage:     "chain_failover [--include-commands] [--apply] [--all] [--sessions session-a,session-b] [--agents 2,3]",
 		HelpGroup: "Relay",
 		Flags: func(f *grumble.Flags) {
 			f.BoolL("include-commands", false, "Include downstream reconnect commands with relay tokens")
+			f.BoolL("apply", false, "Apply selected failover recommendations")
+			f.BoolL("all", false, "Apply every supported failover recommendation")
+			f.StringL("sessions", "", "Comma-separated SessionIDs to fail over")
+			f.StringL("agents", "", "Comma-separated agent IDs to fail over")
 		},
 		Run: func(c *grumble.Context) error {
 			includeCommands := c.Flags.Bool("include-commands")
-			plan := chainFailoverPlan(includeCommands)
+			plan := ChainFailoverPlan{}
+			if c.Flags.Bool("apply") {
+				sessionIDs := splitCSVStrings(c.Flags.String("sessions"))
+				agentIDs, err := splitCSVInts(c.Flags.String("agents"))
+				if err != nil {
+					return err
+				}
+				if !c.Flags.Bool("all") && len(sessionIDs) == 0 && len(agentIDs) == 0 {
+					return errors.New("chain_failover --apply requires --all, --sessions, or --agents")
+				}
+				plan = applyChainFailoverPlan(includeCommands, c.Flags.Bool("all"), sessionIDs, agentIDs)
+			} else {
+				plan = chainFailoverPlan(includeCommands)
+			}
 			if len(plan.Recommendations) == 0 {
 				App.Println("No failover recommendations.")
 				return nil
@@ -647,7 +664,7 @@ func init() {
 			t := table.NewWriter()
 			t.SetStyle(table.StyleLight)
 			t.SetTitle("Relay parent failover plan")
-			header := table.Row{"Agent ID", "Agent", "Current Parent", "Recommended Parent", "Command Ready", "Reason"}
+			header := table.Row{"Agent ID", "Agent", "Current Parent", "Recommended Parent", "Apply", "Applied", "Reason", "Error"}
 			if includeCommands {
 				header = append(header, "Connect Command")
 			}
@@ -657,7 +674,7 @@ func init() {
 				if recommendation.RecommendedParent != nil {
 					recommendedParent = fmt.Sprintf("%d - %s", recommendation.RecommendedParent.AgentID, recommendation.RecommendedParent.Name)
 				}
-				row := table.Row{recommendation.AgentID, recommendation.Name, recommendation.CurrentParentName, recommendedParent, recommendation.CommandAvailable, recommendation.Reason}
+				row := table.Row{recommendation.AgentID, recommendation.Name, recommendation.CurrentParentName, recommendedParent, recommendation.ApplySupported, recommendation.Applied, recommendation.Reason, recommendation.Error}
 				if includeCommands {
 					row = append(row, recommendation.ConnectCommand)
 				}
