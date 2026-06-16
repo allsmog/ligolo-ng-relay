@@ -111,6 +111,84 @@ func TestRelayDoctorReportDeduplicatesWarnings(t *testing.T) {
 	}
 }
 
+func TestRelayOpsReportSummarizesActionsAndConflicts(t *testing.T) {
+	resetAppTestState(t)
+
+	expired := time.Now().Add(-time.Minute)
+	AgentList[1] = &controller.LigoloAgent{
+		Name:                 "root@agent-a",
+		SessionID:            "agent-a",
+		Session:              testYamuxSession(t),
+		RelayActive:          true,
+		RelayListenAddr:      "127.0.0.1:11602",
+		RelayCertFingerprint: "ABCD",
+		RelayTokenExpiresAt:  expired,
+		Network: []protocol.NetInterface{
+			{Addresses: []string{"10.20.30.5/24"}},
+		},
+	}
+	AgentList[2] = &controller.LigoloAgent{
+		Name:      "root@agent-b",
+		SessionID: "agent-b",
+		Session:   testYamuxSession(t),
+		Network: []protocol.NetInterface{
+			{Addresses: []string{"10.20.30.8/24"}},
+		},
+	}
+	ChainMgr.AddLink("agent-a", "agent-b")
+	cachePathRTT("agent-a", 1)
+	cachePathRTT("agent-b", 2)
+
+	report := relayOpsReport(false, "relaytest")
+	if report.Status != "warning" {
+		t.Fatalf("ops status = %q, want warning", report.Status)
+	}
+	if report.Summary.AgentsTotal != 2 {
+		t.Fatalf("agents total = %d, want 2", report.Summary.AgentsTotal)
+	}
+	if report.Summary.AgentsOnline != 2 {
+		t.Fatalf("agents online = %d, want 2", report.Summary.AgentsOnline)
+	}
+	if report.Summary.DirectAgents != 1 {
+		t.Fatalf("direct agents = %d, want 1", report.Summary.DirectAgents)
+	}
+	if report.Summary.RelayedAgents != 1 {
+		t.Fatalf("relayed agents = %d, want 1", report.Summary.RelayedAgents)
+	}
+	if report.Summary.ActiveRelays != 1 {
+		t.Fatalf("active relays = %d, want 1", report.Summary.ActiveRelays)
+	}
+	if report.Summary.DownstreamAgents != 1 {
+		t.Fatalf("downstream agents = %d, want 1", report.Summary.DownstreamAgents)
+	}
+	if report.Summary.ExpiredTokens != 1 {
+		t.Fatalf("expired tokens = %d, want 1", report.Summary.ExpiredTokens)
+	}
+	if report.Summary.RouteConflicts != 2 {
+		t.Fatalf("route conflicts = %d, want 2", report.Summary.RouteConflicts)
+	}
+	if report.Summary.Warnings == 0 {
+		t.Fatalf("warnings = 0, want at least one")
+	}
+
+	var rotateExpiredToken bool
+	var duplicateRoute bool
+	for _, action := range report.Actions {
+		switch action.Title {
+		case "Rotate expired relay token":
+			rotateExpiredToken = true
+		case "Resolve duplicate route candidate":
+			duplicateRoute = true
+		}
+	}
+	if !rotateExpiredToken {
+		t.Fatalf("missing rotate expired relay token action: %+v", report.Actions)
+	}
+	if !duplicateRoute {
+		t.Fatalf("missing duplicate route action: %+v", report.Actions)
+	}
+}
+
 func resetAppTestState(t *testing.T) {
 	oldAgentList := AgentList
 	oldChainMgr := ChainMgr

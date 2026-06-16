@@ -3,7 +3,12 @@
 
 package main
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
 
 func TestParseTokenTTLSeconds(t *testing.T) {
 	seconds, err := parseTokenTTLSeconds("30m")
@@ -20,5 +25,36 @@ func TestParseTokenTTLSecondsRejectsInvalidValues(t *testing.T) {
 		if _, err := parseTokenTTLSeconds(value); err == nil {
 			t.Fatalf("parse token TTL %q succeeded, want error", value)
 		}
+	}
+}
+
+func TestRunOpsFailsOnWarning(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/relay/ops" {
+			t.Fatalf("path = %q, want /api/v1/relay/ops", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("with_ipv6"); got != "true" {
+			t.Fatalf("with_ipv6 = %q, want true", got)
+		}
+		if got := r.URL.Query().Get("interface_prefix"); got != "relaytest" {
+			t.Fatalf("interface_prefix = %q, want relaytest", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"warning","summary":{"warnings":1}}`))
+	}))
+	defer server.Close()
+
+	c := &client{
+		baseURL:    server.URL,
+		token:      "test-token",
+		httpClient: server.Client(),
+	}
+	err := runOps(c, []string{"--with-ipv6", "--interface-prefix", "relaytest", "--fail-on-warning"})
+	if err == nil {
+		t.Fatal("runOps succeeded, want warning error")
+	}
+	if !strings.Contains(err.Error(), `relay ops status is "warning"`) {
+		t.Fatalf("runOps error = %v", err)
 	}
 }

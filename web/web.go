@@ -18,7 +18,7 @@ package web
 
 import "embed"
 
-//go:generate npm install -C ligolo-ng-web
+//go:generate npm ci -C ligolo-ng-web
 //go:generate npm run build-ligolo -C ligolo-ng-web
 
 //go:embed dist

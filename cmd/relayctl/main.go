@@ -65,6 +65,8 @@ func main() {
 		err = c.print("GET", "/api/v1/chains", nil)
 	case "doctor":
 		err = runDoctor(c, args)
+	case "ops":
+		err = runOps(c, args)
 	case "chain-routes":
 		err = runChainRoutes(c, args)
 	case "chain-autoroute":
@@ -90,6 +92,7 @@ func usage() {
   relayctl [global flags] agents
   relayctl [global flags] chains
   relayctl [global flags] doctor [--with-ipv6] [--interface-prefix ligolo]
+  relayctl [global flags] ops [--with-ipv6] [--interface-prefix ligolo] [--fail-on-warning]
   relayctl [global flags] chain-routes [--with-ipv6] [--interface-prefix ligolo]
   relayctl [global flags] chain-autoroute [--with-ipv6] [--interface-prefix ligolo] [--start]
   relayctl [global flags] relay-start --agent id --listen 127.0.0.1:11602 [--relay-token token] [--token-ttl 8h] [--one-time-token]
@@ -121,6 +124,37 @@ func runDoctor(c *client, args []string) error {
 	q.Set("with_ipv6", fmt.Sprintf("%t", *withIPv6))
 	q.Set("interface_prefix", *interfacePrefix)
 	return c.print("GET", "/api/v1/relay/doctor?"+q.Encode(), nil)
+}
+
+func runOps(c *client, args []string) error {
+	fs := flag.NewFlagSet("ops", flag.ExitOnError)
+	withIPv6 := fs.Bool("with-ipv6", false, "include IPv6 route candidates")
+	interfacePrefix := fs.String("interface-prefix", "ligolo", "interface prefix")
+	failOnWarning := fs.Bool("fail-on-warning", false, "exit non-zero when relay ops status is not ok")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	q := url.Values{}
+	q.Set("with_ipv6", fmt.Sprintf("%t", *withIPv6))
+	q.Set("interface_prefix", *interfacePrefix)
+	payload, err := c.do("GET", "/api/v1/relay/ops?"+q.Encode(), nil)
+	if err != nil {
+		return err
+	}
+	printPayload(payload)
+	if !*failOnWarning {
+		return nil
+	}
+	var status struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(payload, &status); err != nil {
+		return err
+	}
+	if status.Status != "ok" {
+		return fmt.Errorf("relay ops status is %q", status.Status)
+	}
+	return nil
 }
 
 func runChainRoutes(c *client, args []string) error {
@@ -236,13 +270,17 @@ func (c *client) print(method, path string, body any) error {
 	if err != nil {
 		return err
 	}
+	printPayload(payload)
+	return nil
+}
+
+func printPayload(payload []byte) {
 	var pretty bytes.Buffer
 	if err := json.Indent(&pretty, payload, "", "  "); err != nil {
 		fmt.Println(string(payload))
-		return nil
+		return
 	}
 	fmt.Println(pretty.String())
-	return nil
 }
 
 func (c *client) do(method, path string, body any) ([]byte, error) {

@@ -72,6 +72,8 @@ model and adds recursive relay chains for multi-pivot operator workflows.
 - Automatic tunnel/listeners recovery (in case of network issues)
 - Websocket support
 - **Multi-hop agent chaining (relay mode)** for pivoting through segmented networks (see [ENHANCEMENTS.md](ENHANCEMENTS.md))
+- **Relay operations dashboard and `relayctl ops`** for chain health, route
+  conflicts, token state, and automation gates
 - **ICMP Port Unreachable** responses for fast UDP port scanning
 
 ## Fork verification
@@ -83,8 +85,12 @@ model and adds recursive relay chains for multi-pivot operator workflows.
   doctor`, token rotation, and revocation.
 - [doc/RELAY_API.md](doc/RELAY_API.md) documents scriptable relay control and
   structured chain status, including the `relayctl` helper.
-- `chain_routes`, `chain_autoroute`, and `relayctl chain-autoroute` help set up
-  per-agent routes across direct and relayed sessions.
+- `chain_routes`, `chain_autoroute`, `relayctl chain-autoroute`, and
+  `relayctl ops --fail-on-warning` help set up and gate per-agent routes across
+  direct and relayed sessions.
+- The Web UI **Relay** page exposes the same relay operations report with
+  topology, route conflicts, suggested actions, autoroute, relay start, and
+  token controls.
 - [doc/UDP_SCAN_BENCHMARK.md](doc/UDP_SCAN_BENCHMARK.md) describes how to measure
   UDP scan speed and classification accuracy.
 - [doc/RESTRICTIVE_EGRESS.md](doc/RESTRICTIVE_EGRESS.md) covers WebSocket, HTTP
@@ -92,6 +98,8 @@ model and adds recursive relay chains for multi-pivot operator workflows.
 - [doc/PERFORMANCE.md](doc/PERFORMANCE.md) gives repeatable path RTT and
   throughput checks for relay chains.
 - [doc/RELEASE.md](doc/RELEASE.md) documents release gates and artifact signing.
+- `build/verify-release.sh` verifies release archives, checksum Sigstore
+  bundles, and GHCR image signatures for a downloaded release.
 
 ## Demo
 

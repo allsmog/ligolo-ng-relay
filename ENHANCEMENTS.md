@@ -3,9 +3,10 @@
 Ligolo-ng Relay is a maintained fork of
 [Ligolo-ng](https://github.com/nicocha30/ligolo-ng). It adds multi-hop agent
 chaining (relay mode) and ICMP Port Unreachable responses on top of upstream
-Ligolo-ng. Everything else — setup, tunneling, listeners, the web UI — works
-exactly as in upstream, so the [Ligolo-ng documentation](https://docs.ligolo.ng/)
-still applies.
+Ligolo-ng. Core setup, tunneling, and listeners still follow upstream behavior,
+while this fork adds relay-focused automation and a Web UI operations dashboard.
+The [Ligolo-ng documentation](https://docs.ligolo.ng/) still applies for
+upstream features.
 
 Operational docs:
 
@@ -70,6 +71,7 @@ full chain.
 | `chain_list --json` | Display structured chain status for automation |
 | `chain_routes` | Display route candidates across direct and relayed agents |
 | `chain_autoroute` | Configure per-agent routes/interfaces across the chain |
+| `relayctl ops --fail-on-warning` | Print the relay operations report and fail when health is not `ok` |
 
 ### REST API
 
@@ -81,8 +83,15 @@ full chain.
 | `DELETE /api/v1/relay/:id/token` | Revoke the active token and stop relay mode |
 | `GET /api/v1/chains` | Get human and structured chain topology |
 | `GET /api/v1/relay/doctor` | Get relay diagnostics, recent auth failures, and route warnings |
+| `GET /api/v1/relay/ops` | Get dashboard-ready relay summary counters and suggested actions |
 | `GET /api/v1/chain_routes` | Get route candidates across the chain |
 | `POST /api/v1/chain_autoroute` | Configure per-agent routes/interfaces |
+
+### Web UI
+
+The Web UI includes a **Relay** page that polls `/api/v1/relay/ops` and gives
+operators summary metrics, chain topology, route conflicts, suggested actions,
+chain autoroute, relay start, and relay token rotation or revocation controls.
 
 ### Notes & limits
 
@@ -101,6 +110,8 @@ full chain.
 - Relay diagnostics distinguish relay-down/control-channel failures from
   downstream auth rejection, pending connection overload, depth rejection, and
   duplicate route candidates.
+- Relay operations reports condense diagnostics into stable counters and action
+  items for scripts, dashboards, and smoke checks.
 - Stopping a relay now closes downstream sessions registered through that relay
   and prunes their chain links.
 - Structured chain status reports online/offline state and cached proxy-to-agent

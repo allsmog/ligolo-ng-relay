@@ -552,6 +552,16 @@ func StartLigoloApi() {
 			c.JSON(http.StatusOK, relayDoctorReport(withIPv6, interfacePrefix))
 		})
 
+		apiv1.GET("/relay/ops", func(c *gin.Context) {
+			withIPv6, err := strconv.ParseBool(c.DefaultQuery("with_ipv6", "false"))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, inputError)
+				return
+			}
+			interfacePrefix := c.DefaultQuery("interface_prefix", "ligolo")
+			c.JSON(http.StatusOK, relayOpsReport(withIPv6, interfacePrefix))
+		})
+
 		apiv1.GET("/chain_routes", func(c *gin.Context) {
 			withIPv6, err := strconv.ParseBool(c.DefaultQuery("with_ipv6", "false"))
 			if err != nil {

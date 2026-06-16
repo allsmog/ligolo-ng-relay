@@ -431,6 +431,37 @@ type RelayDoctorReport struct {
 	Relays      []RelayDoctorRelay  `json:"relays,omitempty"`
 }
 
+type RelayOpsReport struct {
+	GeneratedAt time.Time           `json:"generated_at"`
+	Status      string              `json:"status"`
+	Summary     RelayOpsSummary     `json:"summary"`
+	Warnings    []string            `json:"warnings,omitempty"`
+	Actions     []RelayOpsAction    `json:"actions,omitempty"`
+	Chain       proxy.ChainSnapshot `json:"chain"`
+	Routes      []ChainRouteInfo    `json:"routes,omitempty"`
+	Relays      []RelayDoctorRelay  `json:"relays,omitempty"`
+}
+
+type RelayOpsSummary struct {
+	AgentsTotal      int `json:"agents_total"`
+	AgentsOnline     int `json:"agents_online"`
+	DirectAgents     int `json:"direct_agents"`
+	RelayedAgents    int `json:"relayed_agents"`
+	ActiveRelays     int `json:"active_relays"`
+	DownstreamAgents int `json:"downstream_agents"`
+	ExpiredTokens    int `json:"expired_tokens"`
+	RouteConflicts   int `json:"route_conflicts"`
+	Warnings         int `json:"warnings"`
+	MaxDepth         int `json:"max_depth"`
+}
+
+type RelayOpsAction struct {
+	Severity string `json:"severity"`
+	AgentID  int    `json:"agent_id,omitempty"`
+	Title    string `json:"title"`
+	Detail   string `json:"detail,omitempty"`
+}
+
 type RelayDoctorRelay struct {
 	AgentID   int                    `json:"agent_id"`
 	Name      string                 `json:"name"`
@@ -507,6 +538,111 @@ func relayDoctorReport(includeIPv6 bool, interfacePrefix string) RelayDoctorRepo
 		report.Status = "warning"
 	}
 	return report
+}
+
+func relayOpsReport(includeIPv6 bool, interfacePrefix string) RelayOpsReport {
+	doctor := relayDoctorReport(includeIPv6, interfacePrefix)
+	report := RelayOpsReport{
+		GeneratedAt: doctor.GeneratedAt,
+		Status:      doctor.Status,
+		Warnings:    doctor.Warnings,
+		Chain:       doctor.Chain,
+		Routes:      doctor.Routes,
+		Relays:      doctor.Relays,
+	}
+	report.Summary = relayOpsSummary(doctor)
+	report.Actions = relayOpsActions(doctor)
+	return report
+}
+
+func relayOpsSummary(report RelayDoctorReport) RelayOpsSummary {
+	summary := RelayOpsSummary{
+		MaxDepth: len(report.Chain.Agents),
+		Warnings: len(report.Warnings),
+	}
+	if report.Chain.MaxDepth > 0 {
+		summary.MaxDepth = report.Chain.MaxDepth
+	}
+	var walk func(nodes []proxy.ChainNode)
+	walk = func(nodes []proxy.ChainNode) {
+		for _, node := range nodes {
+			summary.AgentsTotal++
+			if node.Alive {
+				summary.AgentsOnline++
+			}
+			if node.ParentSessionID == "" {
+				summary.DirectAgents++
+			} else {
+				summary.RelayedAgents++
+			}
+			if node.RelayActive {
+				summary.ActiveRelays++
+			}
+			summary.DownstreamAgents += node.DownstreamCount
+			if node.RelayTokenExpired {
+				summary.ExpiredTokens++
+			}
+			walk(node.Children)
+		}
+	}
+	walk(report.Chain.Agents)
+	for _, route := range report.Routes {
+		if route.Conflict {
+			summary.RouteConflicts++
+		}
+	}
+	return summary
+}
+
+func relayOpsActions(report RelayDoctorReport) []RelayOpsAction {
+	var actions []RelayOpsAction
+	if len(report.Chain.Agents) == 0 {
+		actions = append(actions, RelayOpsAction{
+			Severity: "warning",
+			Title:    "Connect at least one agent",
+			Detail:   "No agents are available for relay operations.",
+		})
+	}
+	for _, relay := range report.Relays {
+		if !relay.Alive {
+			actions = append(actions, RelayOpsAction{
+				Severity: "critical",
+				AgentID:  relay.AgentID,
+				Title:    "Restore agent connectivity",
+				Detail:   fmt.Sprintf("%s is offline.", relay.Name),
+			})
+		}
+		if relay.Relay.Active && relay.Relay.TokenExpired {
+			actions = append(actions, RelayOpsAction{
+				Severity: "critical",
+				AgentID:  relay.AgentID,
+				Title:    "Rotate expired relay token",
+				Detail:   fmt.Sprintf("%s has an expired relay auth token.", relay.Name),
+			})
+		}
+		for _, problem := range relay.Problems {
+			actions = append(actions, RelayOpsAction{
+				Severity: "warning",
+				AgentID:  relay.AgentID,
+				Title:    "Investigate relay problem",
+				Detail:   problem,
+			})
+		}
+	}
+	seenRouteWarnings := make(map[string]bool)
+	for _, route := range report.Routes {
+		if !route.Conflict || seenRouteWarnings[route.Warning] {
+			continue
+		}
+		actions = append(actions, RelayOpsAction{
+			Severity: "warning",
+			AgentID:  route.AgentID,
+			Title:    "Resolve duplicate route candidate",
+			Detail:   route.Warning,
+		})
+		seenRouteWarnings[route.Warning] = true
+	}
+	return actions
 }
 
 func stopRelayWithDownstream(relayAgent *controller.LigoloAgent) error {

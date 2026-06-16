@@ -8,7 +8,9 @@ an untracked patchset.
 ```
 git fetch upstream master
 git merge-base --is-ancestor upstream/master HEAD
-git submodule update --init --recursive
+npm ci --prefix web/ligolo-ng-web
+npm run build --prefix web/ligolo-ng-web
+npm audit --audit-level=high --prefix web/ligolo-ng-web
 go test ./...
 go build ./cmd/proxy ./cmd/agent
 go build ./cmd/relayctl
@@ -67,6 +69,15 @@ cosign verify \
   --certificate-identity "https://github.com/<owner>/ligolo-ng-relay/.github/workflows/release.yml@refs/tags/<version>" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   ghcr.io/<owner>/ligolo-ng-relay-proxy:<version>
+```
+
+The repository also includes a wrapper that verifies every downloaded archive
+against `checksums.txt`, verifies the checksum Sigstore bundle, and verifies the
+three release images:
+
+```
+gh release download <version> --dir /tmp/ligolo-release
+build/verify-release.sh /tmp/ligolo-release <version> <owner>/ligolo-ng-relay
 ```
 
 ## OIDC Smoke Test

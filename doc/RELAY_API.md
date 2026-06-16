@@ -117,6 +117,49 @@ route warnings, active relay metadata, token expiry state, and recent relay
 events such as downstream auth rejection, pending connection overload, depth
 rejection, or relay control-channel closure.
 
+Inspect the operator-grade relay operations report:
+
+```
+curl -fsS 'http://127.0.0.1:8080/api/v1/relay/ops?with_ipv6=false&interface_prefix=ligolo' \
+  -H "Authorization: $TOKEN" | jq
+```
+
+The ops response wraps the doctor data with a summary and action queue suitable
+for dashboards and CI gates:
+
+```json
+{
+  "status": "warning",
+  "summary": {
+    "agents_total": 2,
+    "agents_online": 2,
+    "direct_agents": 1,
+    "relayed_agents": 1,
+    "active_relays": 1,
+    "downstream_agents": 1,
+    "expired_tokens": 0,
+    "route_conflicts": 2,
+    "warnings": 1,
+    "max_depth": 5
+  },
+  "actions": [
+    {
+      "severity": "warning",
+      "agent_id": 1,
+      "title": "Resolve duplicate route candidate",
+      "detail": "route 10.20.30.0/24 is advertised by multiple agents"
+    }
+  ],
+  "chain": {},
+  "routes": [],
+  "relays": []
+}
+```
+
+Use `status` as the top-level automation result. `summary` gives stable counters
+for dashboards, and `actions` contains remediation-oriented items derived from
+offline agents, expired relay tokens, relay errors, and route conflicts.
+
 Inspect route candidates across all online agents:
 
 ```
@@ -140,12 +183,24 @@ The `relayctl` helper wraps the same REST calls for scripts:
 ```
 relayctl -api http://127.0.0.1:8080 -user relay -password change-me chains
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" doctor
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" ops --fail-on-warning
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" relay-start --agent 1 --listen <agent-interface-ip>:11602 --token-ttl 8h
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" relay-token-rotate --agent 1 --token-ttl 30m
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" relay-token-revoke --agent 1
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-routes
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-autoroute --interface-prefix ligolo
 ```
+
+`relayctl ops --fail-on-warning` prints the full JSON report and exits non-zero
+when the report status is not `ok`, making it suitable for smoke tests before a
+relay chain is handed to operators or automation.
+
+## Web UI
+
+The Web UI includes a **Relay** page at `/relay`. It polls the same
+`/api/v1/relay/ops` report and exposes summary metrics, topology, route
+conflicts, suggested actions, chain autoroute, relay start, and relay token
+rotation or revocation controls.
 
 Environment variable equivalents are supported:
 
