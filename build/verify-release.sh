@@ -47,6 +47,7 @@ if [ ! -f "$bundle" ]; then
 fi
 
 owner="${owner_repo%%/*}"
+image_version="${version#v}"
 identity="${COSIGN_IDENTITY:-https://github.com/${owner_repo}/.github/workflows/release.yml@refs/tags/${version}}"
 issuer="${COSIGN_ISSUER:-https://token.actions.githubusercontent.com}"
 
@@ -71,9 +72,9 @@ cosign verify-blob \
   "$checksums"
 
 images=(
-  "ghcr.io/${owner}/ligolo-ng-relay-proxy:${version}"
-  "ghcr.io/${owner}/ligolo-ng-relay-agent:${version}"
-  "ghcr.io/${owner}/ligolo-ng-relayctl:${version}"
+  "ghcr.io/${owner}/ligolo-ng-relay-proxy:${image_version}"
+  "ghcr.io/${owner}/ligolo-ng-relay-agent:${image_version}"
+  "ghcr.io/${owner}/ligolo-ng-relayctl:${image_version}"
 )
 
 for image in "${images[@]}"; do
