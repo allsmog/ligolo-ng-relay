@@ -11,7 +11,7 @@ PROXY="ligolo-test-proxy-$$"
 AGENTA="ligolo-test-agent-a-$$"
 AGENTB="ligolo-test-agent-b-$$"
 AGENTC="ligolo-test-agent-c-$$"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ligolo-relay-test.XXXXXX")"
+TMP_DIR="$(mktemp -d "$ROOT/.relay-test.XXXXXX")"
 DOCKER_READY=0
 HTTP_PORT=18082
 LISTENER_PORT=18081
@@ -281,4 +281,9 @@ echo "== verify relayctl client =="
 docker_cmd run --rm --network "$NET" "$IMAGE" \
 	relayctl -api http://proxy:8080 -user relay -password relay-pass chains |
 	jq -e '[.agents[] | recurse(.children[]?) | select((.session_id == "agent-b" or .session_id == "agent-c") and .alive == true)] | length == 0' >/dev/null
+
+echo "== verify relayctl doctor =="
+docker_cmd run --rm --network "$NET" "$IMAGE" \
+	relayctl -api http://proxy:8080 -user relay -password relay-pass doctor |
+	jq -e '.status == "ok" or .status == "warning"' >/dev/null
 echo "PASS relay integration"

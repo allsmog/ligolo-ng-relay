@@ -20,7 +20,7 @@ chain topology. It also verifies `chain_routes`/`chain_autoroute`, relays TCP
 listener traffic from Agent C back to a proxy-side HTTP fixture, rechecks that
 traffic after an idle period, verifies descendant cleanup when Agent B's relay is
 stopped, re-forms Agent C through Agent B, and checks cleanup after Agent B is
-killed.
+killed. It also verifies the `relayctl doctor` diagnostics endpoint.
 
 Requirements:
 

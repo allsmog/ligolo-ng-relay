@@ -364,7 +364,7 @@ func HandleConn(conn net.Conn) {
 		logrus.Infof("Received relay request for %s", relayRequest.ListenAddr)
 
 		// StartRelayListener sends the RelayResponsePacket itself (with cert fingerprint)
-		if err := StartRelayListener(relayRequest.ListenAddr, relayRequest.AuthTokenHash, conn); err != nil {
+		if err := StartRelayListener(relayRequest.ListenAddr, relayRequest.AuthTokenHash, relayRequest.AuthTokenExpiresAtUnix, relayRequest.OneTimeToken, conn); err != nil {
 			logrus.Errorf("Relay start failed: %v", err)
 			encoder.Encode(protocol.RelayResponsePacket{
 				Err:       true,

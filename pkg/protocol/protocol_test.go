@@ -57,10 +57,13 @@ func TestRelayPackets(t *testing.T) {
 	}{
 		{
 			name:   "RelayRequest",
-			packet: RelayRequestPacket{ListenAddr: "0.0.0.0:11602", AuthTokenHash: "abc123"},
+			packet: RelayRequestPacket{ListenAddr: "0.0.0.0:11602", AuthTokenHash: "abc123", AuthTokenExpiresAtUnix: 12345, OneTimeToken: true},
 			checker: func(p interface{}) bool {
 				pkt := p.(*RelayRequestPacket)
-				return pkt.ListenAddr == "0.0.0.0:11602" && pkt.AuthTokenHash == "abc123"
+				return pkt.ListenAddr == "0.0.0.0:11602" &&
+					pkt.AuthTokenHash == "abc123" &&
+					pkt.AuthTokenExpiresAtUnix == 12345 &&
+					pkt.OneTimeToken
 			},
 		},
 		{
@@ -93,6 +96,17 @@ func TestRelayPackets(t *testing.T) {
 			checker: func(p interface{}) bool {
 				pkt := p.(*RelayBridgeRequestPacket)
 				return pkt.ConnectionID == 42
+			},
+		},
+		{
+			name:   "RelayEvent",
+			packet: RelayEventPacket{Kind: "auth_rejected", RemoteAddr: "10.0.0.5:54321", Message: "token rejected", AtUnix: 12345},
+			checker: func(p interface{}) bool {
+				pkt := p.(*RelayEventPacket)
+				return pkt.Kind == "auth_rejected" &&
+					pkt.RemoteAddr == "10.0.0.5:54321" &&
+					pkt.Message == "token rejected" &&
+					pkt.AtUnix == 12345
 			},
 		},
 	}

@@ -27,6 +27,21 @@ jobs:
         with:
           go-version: '1.24'
       -
+        name: Verify upstream ancestry
+        run: |
+          git remote add upstream https://github.com/nicocha30/ligolo-ng.git
+          git fetch upstream master
+          git merge-base --is-ancestor upstream/master HEAD
+      -
+        name: Go test
+        run: go test ./...
+      -
+        name: Build commands
+        run: go build ./cmd/proxy ./cmd/agent ./cmd/relayctl
+      -
+        name: Run relay integration lab
+        run: make relay-test
+      -
         name: Log in to GHCR
         uses: docker/login-action@v3
         with:

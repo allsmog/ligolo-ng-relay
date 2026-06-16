@@ -104,6 +104,7 @@ func chainAgentInfos() []proxy.AgentInfo {
 	entries := make([]chainAgentEntry, 0, len(ids))
 	for _, agentID := range ids {
 		agent := AgentList[agentID]
+		relayStatus := agent.RelayStatusSnapshot()
 		remoteAddr := ""
 		if agent.Session != nil {
 			remoteAddr = agent.Session.RemoteAddr().String()
@@ -111,15 +112,19 @@ func chainAgentInfos() []proxy.AgentInfo {
 		entries = append(entries, chainAgentEntry{
 			agent: agent,
 			info: proxy.AgentInfo{
-				AgentID:         agentID,
-				Name:            agent.Name,
-				SessionID:       agent.SessionID,
-				RemoteAddr:      remoteAddr,
-				RelayActive:     agent.RelayActive,
-				RelayListenAddr: agent.RelayListenAddr,
-				Alive:           agent.Alive(),
-				Running:         agent.Running,
-				ParentSessionID: agent.ParentAgentID,
+				AgentID:              agentID,
+				Name:                 agent.Name,
+				SessionID:            agent.SessionID,
+				RemoteAddr:           remoteAddr,
+				RelayActive:          agent.RelayActive,
+				RelayListenAddr:      agent.RelayListenAddr,
+				RelayCertFingerprint: relayStatus.CertFingerprint,
+				RelayTokenExpiresAt:  relayStatus.TokenExpiresAt,
+				RelayTokenExpired:    relayStatus.TokenExpired,
+				RelayOneTimeToken:    relayStatus.OneTimeToken,
+				Alive:                agent.Alive(),
+				Running:              agent.Running,
+				ParentSessionID:      agent.ParentAgentID,
 			},
 		})
 	}
@@ -215,6 +220,9 @@ type ChainRouteInfo struct {
 	HopDepth        int    `json:"hop_depth"`
 	Interface       string `json:"interface"`
 	Route           string `json:"route"`
+	Conflict        bool   `json:"conflict"`
+	ConflictWith    []int  `json:"conflict_with,omitempty"`
+	Warning         string `json:"warning,omitempty"`
 }
 
 func candidateRoutes(agent *controller.LigoloAgent, includeIPv6 bool) []string {
@@ -242,6 +250,15 @@ func chainInterfaceName(prefix string, agentID int) string {
 		prefix = "ligolo"
 	}
 	return fmt.Sprintf("%s%d", prefix, agentID)
+}
+
+func routeConflictKey(route string) string {
+	ip, ipNet, err := net.ParseCIDR(route)
+	if err != nil {
+		return route
+	}
+	ipNet.IP = ip.Mask(ipNet.Mask)
+	return ipNet.String()
 }
 
 func chainRouteInfos(includeIPv6 bool, interfacePrefix string) []ChainRouteInfo {
@@ -275,6 +292,25 @@ func chainRouteInfos(includeIPv6 bool, interfacePrefix string) []ChainRouteInfo 
 				Route:           route,
 			})
 		}
+	}
+	routesByCIDR := make(map[string][]int)
+	for _, route := range routes {
+		key := routeConflictKey(route.Route)
+		routesByCIDR[key] = append(routesByCIDR[key], route.AgentID)
+	}
+	for i := range routes {
+		key := routeConflictKey(routes[i].Route)
+		agentIDs := routesByCIDR[key]
+		if len(agentIDs) <= 1 {
+			continue
+		}
+		routes[i].Conflict = true
+		for _, agentID := range agentIDs {
+			if agentID != routes[i].AgentID {
+				routes[i].ConflictWith = append(routes[i].ConflictWith, agentID)
+			}
+		}
+		routes[i].Warning = fmt.Sprintf("route %s is advertised by multiple agents", key)
 	}
 	return routes
 }
@@ -341,6 +377,136 @@ func relayListenPort(listenAddr string) string {
 		return "<port>"
 	}
 	return port
+}
+
+func startRelayOnAgent(agent *controller.LigoloAgent, listenAddr, authToken string, tokenTTL time.Duration, oneTimeToken bool) (*controller.RelayStartResult, error) {
+	result, err := agent.StartRelayWithOptions(controller.RelayStartOptions{
+		ListenAddr:   listenAddr,
+		AuthToken:    authToken,
+		TokenTTL:     tokenTTL,
+		OneTimeToken: oneTimeToken,
+	})
+	if err != nil {
+		return nil, err
+	}
+	startRelayNotificationHandler(agent)
+	return result, nil
+}
+
+func startRelayNotificationHandler(agent *controller.LigoloAgent) {
+	go agent.HandleRelayNotifications(ChainMgr, func(a *controller.LigoloAgent) error {
+		logrus.WithFields(logrus.Fields{
+			"name":    a.Name,
+			"session": a.SessionID,
+			"via":     agent.Name,
+		}).Info("Downstream agent connected via relay")
+		return RegisterAgent(a)
+	})
+}
+
+func relayTokenTTLFromSeconds(seconds int64) time.Duration {
+	if seconds <= 0 {
+		return controller.DefaultRelayTokenTTL
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func rotateRelayToken(agent *controller.LigoloAgent, authToken string, tokenTTL time.Duration, oneTimeToken bool) (*controller.RelayStartResult, error) {
+	if !agent.RelayActive {
+		return nil, errors.New("relay is not active")
+	}
+	listenAddr := agent.RelayListenAddr
+	if err := stopRelayWithDownstream(agent); err != nil {
+		return nil, err
+	}
+	return startRelayOnAgent(agent, listenAddr, authToken, tokenTTL, oneTimeToken)
+}
+
+type RelayDoctorReport struct {
+	GeneratedAt time.Time           `json:"generated_at"`
+	Status      string              `json:"status"`
+	Warnings    []string            `json:"warnings,omitempty"`
+	Chain       proxy.ChainSnapshot `json:"chain"`
+	Routes      []ChainRouteInfo    `json:"routes,omitempty"`
+	Relays      []RelayDoctorRelay  `json:"relays,omitempty"`
+}
+
+type RelayDoctorRelay struct {
+	AgentID   int                    `json:"agent_id"`
+	Name      string                 `json:"name"`
+	SessionID string                 `json:"session_id"`
+	Alive     bool                   `json:"alive"`
+	Relay     controller.RelayStatus `json:"relay"`
+	Problems  []string               `json:"problems,omitempty"`
+}
+
+func relayDoctorReport(includeIPv6 bool, interfacePrefix string) RelayDoctorReport {
+	snapshot := chainSnapshot()
+	routes := chainRouteInfos(includeIPv6, interfacePrefix)
+	report := RelayDoctorReport{
+		GeneratedAt: time.Now(),
+		Status:      "ok",
+		Chain:       snapshot,
+		Routes:      routes,
+	}
+
+	AgentListMutex.Lock()
+	ids := make([]int, 0, len(AgentList))
+	for agentID := range AgentList {
+		ids = append(ids, agentID)
+	}
+	sort.Ints(ids)
+	for _, agentID := range ids {
+		agent := AgentList[agentID]
+		status := agent.RelayStatusSnapshot()
+		relay := RelayDoctorRelay{
+			AgentID:   agentID,
+			Name:      agent.Name,
+			SessionID: agent.SessionID,
+			Alive:     agent.Alive(),
+			Relay:     status,
+		}
+		if !relay.Alive {
+			relay.Problems = append(relay.Problems, "agent is offline")
+		}
+		if status.Active && status.TokenExpired {
+			relay.Problems = append(relay.Problems, "relay auth token is expired")
+		}
+		if status.Active && status.CertFingerprint == "" {
+			relay.Problems = append(relay.Problems, "relay fingerprint is missing")
+		}
+		if status.LastError != "" {
+			relay.Problems = append(relay.Problems, status.LastError)
+		}
+		if len(relay.Problems) > 0 || status.Active || len(status.RecentEvents) > 0 {
+			report.Relays = append(report.Relays, relay)
+		}
+	}
+	AgentListMutex.Unlock()
+
+	if len(snapshot.Agents) == 0 {
+		report.Warnings = append(report.Warnings, "no agents are connected")
+	}
+	seenWarnings := make(map[string]bool)
+	for _, route := range routes {
+		if route.Conflict && !seenWarnings[route.Warning] {
+			report.Warnings = append(report.Warnings, route.Warning)
+			seenWarnings[route.Warning] = true
+		}
+	}
+	for _, relay := range report.Relays {
+		for _, problem := range relay.Problems {
+			warning := fmt.Sprintf("agent %d: %s", relay.AgentID, problem)
+			if !seenWarnings[warning] {
+				report.Warnings = append(report.Warnings, warning)
+				seenWarnings[warning] = true
+			}
+		}
+	}
+	if len(report.Warnings) > 0 {
+		report.Status = "warning"
+	}
+	return report
 }
 
 func stopRelayWithDownstream(relayAgent *controller.LigoloAgent) error {
@@ -558,24 +724,29 @@ func RegisterAgent(agent *controller.LigoloAgent) error {
 			if registeredAgents.RelayActive {
 				savedRelayAddr := registeredAgents.RelayListenAddr
 				savedRelayAuthToken := registeredAgents.RelayAuthToken
+				savedRelayTokenExpiresAt := registeredAgents.RelayTokenExpiresAt
+				savedRelayOneTimeToken := registeredAgents.RelayOneTimeToken
+				savedRelayOneTimeTokenUsed := registeredAgents.RelayOneTimeTokenUsed
 				// Reset relay state before restarting
 				registeredAgents.RelayActive = false
 				registeredAgents.RelayControl = nil
 
-				logrus.Infof("Restoring relay on agent %s at %s", registeredAgents.Name, savedRelayAddr)
-				fingerprint, authToken, err := registeredAgents.StartRelay(savedRelayAddr, savedRelayAuthToken)
-				if err != nil {
-					logrus.Errorf("Failed to restore relay: %v", err)
+				if savedRelayOneTimeToken && savedRelayOneTimeTokenUsed {
+					logrus.Warnf("Not restoring relay on agent %s because its one-time token was already used", registeredAgents.Name)
 				} else {
-					logrus.Infof("Relay restored (fingerprint: %s). Downstream agents can reconnect with: %s", fingerprint, relayConnectCommand(savedRelayAddr, fingerprint, authToken))
-					go registeredAgents.HandleRelayNotifications(ChainMgr, func(a *controller.LigoloAgent) error {
-						logrus.WithFields(logrus.Fields{
-							"name":    a.Name,
-							"session": a.SessionID,
-							"via":     registeredAgents.Name,
-						}).Info("Downstream agent reconnected via relay")
-						return RegisterAgent(a)
+					logrus.Infof("Restoring relay on agent %s at %s", registeredAgents.Name, savedRelayAddr)
+					result, err := registeredAgents.StartRelayWithOptions(controller.RelayStartOptions{
+						ListenAddr:     savedRelayAddr,
+						AuthToken:      savedRelayAuthToken,
+						TokenExpiresAt: savedRelayTokenExpiresAt,
+						OneTimeToken:   savedRelayOneTimeToken,
 					})
+					if err != nil {
+						logrus.Errorf("Failed to restore relay: %v", err)
+					} else {
+						logrus.Infof("Relay restored (fingerprint: %s, token expires: %s). Downstream agents can reconnect with: %s", result.CertFingerprint, result.TokenExpiresAt.Format(time.RFC3339), relayConnectCommand(savedRelayAddr, result.CertFingerprint, result.AuthToken))
+						startRelayNotificationHandler(registeredAgents)
+					}
 				}
 			}
 
@@ -1194,6 +1365,8 @@ func Run() {
 		Flags: func(f *grumble.Flags) {
 			f.StringL("addr", "127.0.0.1:11602", "The address:port the agent should listen on for downstream agents")
 			f.StringL("relay-token", "", "Optional downstream relay auth token; generated when empty")
+			f.StringL("token-ttl", controller.DefaultRelayTokenTTL.String(), "Relay auth token lifetime (for example 15m, 8h)")
+			f.BoolL("one-time-token", false, "Allow the relay token to authenticate one downstream agent only")
 		},
 		Run: func(c *grumble.Context) error {
 			if _, ok := AgentList[CurrentAgentID]; !ok {
@@ -1209,29 +1382,73 @@ func Run() {
 			if currentAgent.RelayActive {
 				return fmt.Errorf("relay already active on %s", currentAgent.RelayListenAddr)
 			}
+			tokenTTL, err := time.ParseDuration(c.Flags.String("token-ttl"))
+			if err != nil || tokenTTL <= 0 {
+				return fmt.Errorf("invalid token TTL %q", c.Flags.String("token-ttl"))
+			}
 
-			fingerprint, authToken, err := currentAgent.StartRelay(c.Flags.String("addr"), c.Flags.String("relay-token"))
+			result, err := startRelayOnAgent(currentAgent, c.Flags.String("addr"), c.Flags.String("relay-token"), tokenTTL, c.Flags.Bool("one-time-token"))
 			if err != nil {
 				return fmt.Errorf("could not start relay: %v", err)
 			}
 
 			logrus.Infof("Relay started on agent %s at %s", currentAgent.Name, c.Flags.String("addr"))
-			logrus.Infof("TLS Certificate fingerprint: %s", fingerprint)
-			logrus.Infof("Relay auth token: %s", authToken)
-			logrus.Infof("Downstream agents can connect with: %s", relayConnectCommand(c.Flags.String("addr"), fingerprint, authToken))
-			logrus.Infof("Debug fallback only: ./agent -connect <relay-agent-reachable-ip>:%s -ignore-cert -relay-token %s", relayListenPort(c.Flags.String("addr")), authToken)
-
-			// Start listening for downstream agent notifications
-			go currentAgent.HandleRelayNotifications(ChainMgr, func(agent *controller.LigoloAgent) error {
-				logrus.WithFields(logrus.Fields{
-					"name":    agent.Name,
-					"session": agent.SessionID,
-					"via":     currentAgent.Name,
-				}).Info("Downstream agent connected via relay")
-				return RegisterAgent(agent)
-			})
+			logrus.Infof("TLS Certificate fingerprint: %s", result.CertFingerprint)
+			logrus.Infof("Relay auth token: %s", result.AuthToken)
+			logrus.Infof("Relay token expires: %s", result.TokenExpiresAt.Format(time.RFC3339))
+			logrus.Infof("Downstream agents can connect with: %s", relayConnectCommand(c.Flags.String("addr"), result.CertFingerprint, result.AuthToken))
+			logrus.Infof("Debug fallback only: ./agent -connect <relay-agent-reachable-ip>:%s -ignore-cert -relay-token %s", relayListenPort(c.Flags.String("addr")), result.AuthToken)
 
 			return nil
+		},
+	})
+
+	App.AddCommand(&grumble.Command{
+		Name:      "relay_token_rotate",
+		Help:      "Rotate the current agent relay token by restarting its relay listener",
+		Usage:     "relay_token_rotate [--relay-token token] [--token-ttl 8h] [--one-time-token]",
+		HelpGroup: "Relay",
+		Flags: func(f *grumble.Flags) {
+			f.StringL("relay-token", "", "Optional new downstream relay auth token; generated when empty")
+			f.StringL("token-ttl", controller.DefaultRelayTokenTTL.String(), "Relay auth token lifetime (for example 15m, 8h)")
+			f.BoolL("one-time-token", false, "Allow the new relay token to authenticate one downstream agent only")
+		},
+		Run: func(c *grumble.Context) error {
+			if _, ok := AgentList[CurrentAgentID]; !ok {
+				return ErrInvalidAgent
+			}
+			currentAgent := AgentList[CurrentAgentID]
+			tokenTTL, err := time.ParseDuration(c.Flags.String("token-ttl"))
+			if err != nil || tokenTTL <= 0 {
+				return fmt.Errorf("invalid token TTL %q", c.Flags.String("token-ttl"))
+			}
+			result, err := rotateRelayToken(currentAgent, c.Flags.String("relay-token"), tokenTTL, c.Flags.Bool("one-time-token"))
+			if err != nil {
+				return err
+			}
+			logrus.Infof("Relay token rotated for agent %s", currentAgent.Name)
+			logrus.Infof("TLS Certificate fingerprint: %s", result.CertFingerprint)
+			logrus.Infof("Relay auth token: %s", result.AuthToken)
+			logrus.Infof("Relay token expires: %s", result.TokenExpiresAt.Format(time.RFC3339))
+			logrus.Infof("Downstream agents can connect with: %s", relayConnectCommand(currentAgent.RelayListenAddr, result.CertFingerprint, result.AuthToken))
+			return nil
+		},
+	})
+
+	App.AddCommand(&grumble.Command{
+		Name:      "relay_token_revoke",
+		Help:      "Revoke the current relay token by stopping relay mode",
+		Usage:     "relay_token_revoke",
+		HelpGroup: "Relay",
+		Run: func(c *grumble.Context) error {
+			if _, ok := AgentList[CurrentAgentID]; !ok {
+				return ErrInvalidAgent
+			}
+			currentAgent := AgentList[CurrentAgentID]
+			if !currentAgent.RelayActive {
+				return errors.New("relay is not active on this agent")
+			}
+			return stopRelayWithDownstream(currentAgent)
 		},
 	})
 
@@ -1280,6 +1497,38 @@ func Run() {
 			}
 
 			App.Println(snapshot.Topology)
+			return nil
+		},
+	})
+
+	App.AddCommand(&grumble.Command{
+		Name:      "relay_doctor",
+		Help:      "Show relay health, token status, recent events, and route warnings",
+		Usage:     "relay_doctor [--json] [--with-ipv6] [--interface-prefix ligolo]",
+		HelpGroup: "Relay",
+		Flags: func(f *grumble.Flags) {
+			f.BoolL("json", false, "print structured JSON")
+			f.BoolL("with-ipv6", false, "include IPv6 route candidates")
+			f.StringL("interface-prefix", "ligolo", "interface prefix used for route conflict checks")
+		},
+		Run: func(c *grumble.Context) error {
+			report := relayDoctorReport(c.Flags.Bool("with-ipv6"), c.Flags.String("interface-prefix"))
+			if c.Flags.Bool("json") {
+				encoded, err := json.MarshalIndent(report, "", "  ")
+				if err != nil {
+					return err
+				}
+				App.Println(string(encoded))
+				return nil
+			}
+			App.Println(report.Chain.Topology)
+			if len(report.Warnings) == 0 {
+				App.Println("Relay doctor: ok")
+				return nil
+			}
+			for _, warning := range report.Warnings {
+				App.Printf("Relay doctor warning: %s\n", warning)
+			}
 			return nil
 		},
 	})

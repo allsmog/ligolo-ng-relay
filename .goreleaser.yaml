@@ -173,14 +173,12 @@ signs:
     args:
       - -c
       - |
-        if [ -n "${COSIGN_KEY:-}" ]; then
-          cosign sign-blob --key "$COSIGN_KEY" --bundle="$2" "$1" --yes
+        if [ -n "$COSIGN_KEY" ]; then
+          cosign sign-blob --key "$COSIGN_KEY" --bundle="${signature}" --new-bundle-format "${artifact}" --yes
         else
-          cosign sign-blob --bundle="$2" "$1" --yes
+          cosign sign-blob --bundle="${signature}" --new-bundle-format "${artifact}" --yes
         fi
       - sh
-      - ${artifact}
-      - ${signature}
 
 changelog:
   sort: asc

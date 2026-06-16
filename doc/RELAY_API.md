@@ -22,19 +22,40 @@ Start relay mode on agent `1`:
 curl -fsS http://127.0.0.1:8080/api/v1/relay/1 \
   -H "Authorization: $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"ListenAddr":"<agent-interface-ip>:11602"}'
+  -d '{"ListenAddr":"<agent-interface-ip>:11602","TokenTTLSeconds":28800}'
 ```
 
 The proxy generates a relay auth token when `AuthToken` is omitted. The response
-includes that token and a fingerprint-pinned downstream connect command:
+includes that token, its expiry, and a fingerprint-pinned downstream connect
+command. Add `"OneTimeToken": true` to allow a token to authenticate one
+downstream agent only.
 
 ```json
 {
   "message": "relay started",
   "fingerprint": "ABCD...",
   "auth_token": "relay-token...",
+  "token_expires_at": "2026-06-16T20:00:00Z",
+  "one_time_token": false,
   "connect_command": "./agent -connect <relay-agent-reachable-ip>:11602 -accept-fingerprint ABCD... -relay-token relay-token..."
 }
+```
+
+Rotate the active token. Rotation restarts the relay listener and disconnects
+downstream descendants so they must reconnect with the new token:
+
+```
+curl -fsS http://127.0.0.1:8080/api/v1/relay/1/token \
+  -H "Authorization: $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"TokenTTLSeconds":1800}'
+```
+
+Revoke the active token and stop relay mode:
+
+```
+curl -fsS -X DELETE http://127.0.0.1:8080/api/v1/relay/1/token \
+  -H "Authorization: $TOKEN"
 ```
 
 Inspect chain health:
@@ -58,6 +79,10 @@ The chain response keeps the human topology string and adds structured nodes:
       "path_rtt_ms": 4,
       "relay_active": true,
       "relay_listen_addr": "<agent-interface-ip>:11602",
+      "relay_fingerprint": "ABCD...",
+      "relay_token_expires_at": "2026-06-16T20:00:00Z",
+      "relay_token_expired": false,
+      "relay_one_time_token": false,
       "children": []
     }
   ]
@@ -79,6 +104,18 @@ The CLI exposes the same data with:
 chain_list
 chain_list --json
 ```
+
+Run relay diagnostics:
+
+```
+curl -fsS 'http://127.0.0.1:8080/api/v1/relay/doctor?with_ipv6=false&interface_prefix=ligolo' \
+  -H "Authorization: $TOKEN" | jq
+```
+
+The doctor response includes the chain snapshot, route candidates, duplicate
+route warnings, active relay metadata, token expiry state, and recent relay
+events such as downstream auth rejection, pending connection overload, depth
+rejection, or relay control-channel closure.
 
 Inspect route candidates across all online agents:
 
@@ -102,7 +139,10 @@ The `relayctl` helper wraps the same REST calls for scripts:
 
 ```
 relayctl -api http://127.0.0.1:8080 -user relay -password change-me chains
-relayctl -api http://127.0.0.1:8080 -token "$TOKEN" relay-start --agent 1 --listen <agent-interface-ip>:11602
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" doctor
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" relay-start --agent 1 --listen <agent-interface-ip>:11602 --token-ttl 8h
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" relay-token-rotate --agent 1 --token-ttl 30m
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" relay-token-revoke --agent 1
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-routes
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-autoroute --interface-prefix ligolo
 ```

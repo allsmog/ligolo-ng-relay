@@ -101,7 +101,7 @@ func WriteRelayAuth(conn net.Conn, token string) error {
 	return err
 }
 
-func verifyRelayAuth(conn net.Conn, expectedHash string) error {
+func verifyRelayAuth(conn net.Conn, expectedHash string, tokenExpiresAtUnix int64) error {
 	if expectedHash == "" {
 		return nil
 	}
@@ -137,6 +137,9 @@ func verifyRelayAuth(conn net.Conn, expectedHash string) error {
 	if _, err := io.ReadFull(conn, token); err != nil {
 		return fmt.Errorf("relay auth token read failed: %v", err)
 	}
+	if tokenExpiresAtUnix > 0 && time.Now().Unix() >= tokenExpiresAtUnix {
+		return fmt.Errorf("relay auth token expired")
+	}
 	actualHash := sha256.Sum256(token)
 	if subtle.ConstantTimeCompare(actualHash[:], expectedHashBytes) != 1 {
 		return fmt.Errorf("relay auth token rejected")
@@ -144,9 +147,20 @@ func verifyRelayAuth(conn net.Conn, expectedHash string) error {
 	return nil
 }
 
+func sendRelayEvent(encoder *protocol.LigoloEncoder, notifyMutex *sync.Mutex, kind, remoteAddr, message string) error {
+	notifyMutex.Lock()
+	defer notifyMutex.Unlock()
+	return encoder.Encode(protocol.RelayEventPacket{
+		Kind:       kind,
+		RemoteAddr: remoteAddr,
+		Message:    message,
+		AtUnix:     time.Now().Unix(),
+	})
+}
+
 // StartRelayListener starts a TLS listener on the given address and notifies
 // the proxy of each downstream agent connection via the control stream.
-func StartRelayListener(listenAddr string, authTokenHash string, controlConn net.Conn) error {
+func StartRelayListener(listenAddr string, authTokenHash string, tokenExpiresAtUnix int64, oneTimeToken bool, controlConn net.Conn) error {
 	selfcrt := tlsutils.NewSelfCert(nil)
 	crt, err := selfcrt.GetCertificate("ligolo-relay")
 	if err != nil {
@@ -189,6 +203,7 @@ func StartRelayListener(listenAddr string, authTokenHash string, controlConn net
 		// don't leak file descriptors or goroutines.
 		defer drainPendingConns()
 		var notifyMutex sync.Mutex
+		var oneTimeUsed atomic.Bool
 		for {
 			conn, err := lis.Accept()
 			if err != nil {
@@ -197,6 +212,9 @@ func StartRelayListener(listenAddr string, authTokenHash string, controlConn net
 			}
 			if !acquireRelayAuthSlot() {
 				logrus.Warnf("Relay: too many downstream auth handshakes, rejecting %s", conn.RemoteAddr())
+				if err := sendRelayEvent(&encoder, &notifyMutex, "auth_overloaded", conn.RemoteAddr().String(), "too many downstream auth handshakes"); err != nil {
+					logrus.Debugf("Relay: could not report auth overload: %v", err)
+				}
 				conn.Close()
 				continue
 			}
@@ -204,13 +222,27 @@ func StartRelayListener(listenAddr string, authTokenHash string, controlConn net
 			go func(conn net.Conn) {
 				defer releaseRelayAuthSlot()
 
-				if err := verifyRelayAuth(conn, authTokenHash); err != nil {
+				if err := verifyRelayAuth(conn, authTokenHash, tokenExpiresAtUnix); err != nil {
 					logrus.Warnf("Relay: rejected downstream connection from %s: %v", conn.RemoteAddr(), err)
+					if reportErr := sendRelayEvent(&encoder, &notifyMutex, "auth_rejected", conn.RemoteAddr().String(), err.Error()); reportErr != nil {
+						logrus.Debugf("Relay: could not report auth rejection: %v", reportErr)
+					}
+					conn.Close()
+					return
+				}
+				if oneTimeToken && !oneTimeUsed.CompareAndSwap(false, true) {
+					logrus.Warnf("Relay: rejected downstream connection from %s: one-time token already used", conn.RemoteAddr())
+					if reportErr := sendRelayEvent(&encoder, &notifyMutex, "auth_rejected", conn.RemoteAddr().String(), "one-time relay auth token already used"); reportErr != nil {
+						logrus.Debugf("Relay: could not report one-time token rejection: %v", reportErr)
+					}
 					conn.Close()
 					return
 				}
 				if !acquireRelayPendingSlot() {
 					logrus.Warnf("Relay: too many pending downstream connections, rejecting %s", conn.RemoteAddr())
+					if reportErr := sendRelayEvent(&encoder, &notifyMutex, "pending_overloaded", conn.RemoteAddr().String(), "too many pending downstream connections"); reportErr != nil {
+						logrus.Debugf("Relay: could not report pending overload: %v", reportErr)
+					}
 					conn.Close()
 					return
 				}
@@ -219,6 +251,9 @@ func StartRelayListener(listenAddr string, authTokenHash string, controlConn net
 				relayPendingConns.Store(connID, conn)
 
 				logrus.Infof("Relay: downstream agent connected from %s (ID: %d)", conn.RemoteAddr(), connID)
+				if err := sendRelayEvent(&encoder, &notifyMutex, "downstream_authenticated", conn.RemoteAddr().String(), "downstream relay auth accepted"); err != nil {
+					logrus.Debugf("Relay: could not report downstream auth success: %v", err)
+				}
 
 				// Notify proxy via control stream. Serialize writes so concurrent
 				// downstream auth handshakes cannot interleave msgpack frames.

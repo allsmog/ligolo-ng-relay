@@ -63,6 +63,8 @@ func main() {
 		err = c.print("GET", "/api/v1/agents", nil)
 	case "chains":
 		err = c.print("GET", "/api/v1/chains", nil)
+	case "doctor":
+		err = runDoctor(c, args)
 	case "chain-routes":
 		err = runChainRoutes(c, args)
 	case "chain-autoroute":
@@ -71,6 +73,10 @@ func main() {
 		err = runRelayStart(c, args)
 	case "relay-stop":
 		err = runRelayStop(c, args)
+	case "relay-token-rotate":
+		err = runRelayTokenRotate(c, args)
+	case "relay-token-revoke":
+		err = runRelayTokenRevoke(c, args)
 	default:
 		err = fmt.Errorf("unknown command %q", cmd)
 	}
@@ -83,10 +89,13 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `Usage:
   relayctl [global flags] agents
   relayctl [global flags] chains
+  relayctl [global flags] doctor [--with-ipv6] [--interface-prefix ligolo]
   relayctl [global flags] chain-routes [--with-ipv6] [--interface-prefix ligolo]
   relayctl [global flags] chain-autoroute [--with-ipv6] [--interface-prefix ligolo] [--start]
-  relayctl [global flags] relay-start --agent id --listen 127.0.0.1:11602 [--relay-token token]
+  relayctl [global flags] relay-start --agent id --listen 127.0.0.1:11602 [--relay-token token] [--token-ttl 8h] [--one-time-token]
   relayctl [global flags] relay-stop --agent id
+  relayctl [global flags] relay-token-rotate --agent id [--relay-token token] [--token-ttl 8h] [--one-time-token]
+  relayctl [global flags] relay-token-revoke --agent id
 
 Global flags:
 `)
@@ -99,6 +108,19 @@ Global flags:
 	fmt.Fprintln(os.Stderr, "        API password (or LIGOLO_PASSWORD)")
 	fmt.Fprintln(os.Stderr, "  -token string")
 	fmt.Fprintln(os.Stderr, "        API bearer token (or LIGOLO_TOKEN)")
+}
+
+func runDoctor(c *client, args []string) error {
+	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
+	withIPv6 := fs.Bool("with-ipv6", false, "include IPv6 route candidates")
+	interfacePrefix := fs.String("interface-prefix", "ligolo", "interface prefix")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	q := url.Values{}
+	q.Set("with_ipv6", fmt.Sprintf("%t", *withIPv6))
+	q.Set("interface_prefix", *interfacePrefix)
+	return c.print("GET", "/api/v1/relay/doctor?"+q.Encode(), nil)
 }
 
 func runChainRoutes(c *client, args []string) error {
@@ -134,15 +156,23 @@ func runRelayStart(c *client, args []string) error {
 	agentID := fs.Int("agent", 0, "agent ID")
 	listenAddr := fs.String("listen", "127.0.0.1:11602", "relay listen address")
 	relayToken := fs.String("relay-token", os.Getenv("LIGOLO_RELAY_TOKEN"), "relay auth token (or LIGOLO_RELAY_TOKEN); generated when empty")
+	tokenTTL := fs.String("token-ttl", "8h", "relay auth token lifetime")
+	oneTimeToken := fs.Bool("one-time-token", false, "allow the token to authenticate one downstream agent only")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *agentID <= 0 {
 		return errors.New("relay-start requires --agent")
 	}
+	tokenTTLSeconds, err := parseTokenTTLSeconds(*tokenTTL)
+	if err != nil {
+		return err
+	}
 	return c.print("POST", fmt.Sprintf("/api/v1/relay/%d", *agentID), map[string]any{
-		"ListenAddr": *listenAddr,
-		"AuthToken":  *relayToken,
+		"ListenAddr":      *listenAddr,
+		"AuthToken":       *relayToken,
+		"TokenTTLSeconds": tokenTTLSeconds,
+		"OneTimeToken":    *oneTimeToken,
 	})
 }
 
@@ -156,6 +186,49 @@ func runRelayStop(c *client, args []string) error {
 		return errors.New("relay-stop requires --agent")
 	}
 	return c.print("DELETE", fmt.Sprintf("/api/v1/relay/%d", *agentID), nil)
+}
+
+func runRelayTokenRotate(c *client, args []string) error {
+	fs := flag.NewFlagSet("relay-token-rotate", flag.ExitOnError)
+	agentID := fs.Int("agent", 0, "agent ID")
+	relayToken := fs.String("relay-token", os.Getenv("LIGOLO_RELAY_TOKEN"), "new relay auth token (or LIGOLO_RELAY_TOKEN); generated when empty")
+	tokenTTL := fs.String("token-ttl", "8h", "relay auth token lifetime")
+	oneTimeToken := fs.Bool("one-time-token", false, "allow the token to authenticate one downstream agent only")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *agentID <= 0 {
+		return errors.New("relay-token-rotate requires --agent")
+	}
+	tokenTTLSeconds, err := parseTokenTTLSeconds(*tokenTTL)
+	if err != nil {
+		return err
+	}
+	return c.print("POST", fmt.Sprintf("/api/v1/relay/%d/token", *agentID), map[string]any{
+		"AuthToken":       *relayToken,
+		"TokenTTLSeconds": tokenTTLSeconds,
+		"OneTimeToken":    *oneTimeToken,
+	})
+}
+
+func runRelayTokenRevoke(c *client, args []string) error {
+	fs := flag.NewFlagSet("relay-token-revoke", flag.ExitOnError)
+	agentID := fs.Int("agent", 0, "agent ID")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *agentID <= 0 {
+		return errors.New("relay-token-revoke requires --agent")
+	}
+	return c.print("DELETE", fmt.Sprintf("/api/v1/relay/%d/token", *agentID), nil)
+}
+
+func parseTokenTTLSeconds(value string) (int64, error) {
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration <= 0 {
+		return 0, fmt.Errorf("invalid token TTL %q", value)
+	}
+	return int64(duration.Seconds()), nil
 }
 
 func (c *client) print(method, path string, body any) error {

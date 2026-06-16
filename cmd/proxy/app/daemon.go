@@ -19,7 +19,6 @@ package app
 import (
 	"fmt"
 	"github.com/allsmog/ligolo-ng-relay/cmd/proxy/config"
-	"github.com/allsmog/ligolo-ng-relay/pkg/controller"
 	"github.com/allsmog/ligolo-ng-relay/pkg/proxy/netinfo"
 	"github.com/allsmog/ligolo-ng-relay/pkg/tlsutils"
 	"github.com/allsmog/ligolo-ng-relay/web"
@@ -416,8 +415,10 @@ func StartLigoloApi() {
 
 		apiv1.POST("/relay/:id", func(c *gin.Context) {
 			type RelayRequest struct {
-				ListenAddr string
-				AuthToken  string
+				ListenAddr      string
+				AuthToken       string
+				TokenTTLSeconds int64
+				OneTimeToken    bool
 			}
 			var relayReq RelayRequest
 			agentParam := c.Param("id")
@@ -441,22 +442,79 @@ func StartLigoloApi() {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "agent does not support relay mode"})
 				return
 			}
-			fingerprint, authToken, err := agent.StartRelay(relayReq.ListenAddr, relayReq.AuthToken)
+			result, err := startRelayOnAgent(agent, relayReq.ListenAddr, relayReq.AuthToken, relayTokenTTLFromSeconds(relayReq.TokenTTLSeconds), relayReq.OneTimeToken)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
-			// Start notification handler
-			go agent.HandleRelayNotifications(ChainMgr, func(a *controller.LigoloAgent) error {
-				logrus.WithFields(logrus.Fields{"name": a.Name, "session": a.SessionID, "via": agent.Name}).Info("Downstream agent connected via relay")
-				return RegisterAgent(a)
-			})
 			c.JSON(http.StatusOK, gin.H{
-				"message":         "relay started",
-				"fingerprint":     fingerprint,
-				"auth_token":      authToken,
-				"connect_command": relayConnectCommand(relayReq.ListenAddr, fingerprint, authToken),
+				"message":          "relay started",
+				"fingerprint":      result.CertFingerprint,
+				"auth_token":       result.AuthToken,
+				"token_expires_at": result.TokenExpiresAt,
+				"one_time_token":   result.OneTimeToken,
+				"connect_command":  relayConnectCommand(relayReq.ListenAddr, result.CertFingerprint, result.AuthToken),
 			})
+		})
+
+		apiv1.POST("/relay/:id/token", func(c *gin.Context) {
+			type RelayTokenRequest struct {
+				AuthToken       string
+				TokenTTLSeconds int64
+				OneTimeToken    bool
+			}
+			var req RelayTokenRequest
+			agentParam := c.Param("id")
+			agentId, err := strconv.Atoi(agentParam)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, inputError)
+				return
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, inputError)
+				return
+			}
+			AgentListMutex.Lock()
+			agent, ok := AgentList[agentId]
+			AgentListMutex.Unlock()
+			if !ok {
+				c.JSON(http.StatusNotFound, gin.H{"error": "invalid agent"})
+				return
+			}
+			result, err := rotateRelayToken(agent, req.AuthToken, relayTokenTTLFromSeconds(req.TokenTTLSeconds), req.OneTimeToken)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"message":          "relay token rotated",
+				"fingerprint":      result.CertFingerprint,
+				"auth_token":       result.AuthToken,
+				"token_expires_at": result.TokenExpiresAt,
+				"one_time_token":   result.OneTimeToken,
+				"connect_command":  relayConnectCommand(agent.RelayListenAddr, result.CertFingerprint, result.AuthToken),
+			})
+		})
+
+		apiv1.DELETE("/relay/:id/token", func(c *gin.Context) {
+			agentParam := c.Param("id")
+			agentId, err := strconv.Atoi(agentParam)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, inputError)
+				return
+			}
+			AgentListMutex.Lock()
+			agent, ok := AgentList[agentId]
+			AgentListMutex.Unlock()
+			if !ok {
+				c.JSON(http.StatusNotFound, gin.H{"error": "invalid agent"})
+				return
+			}
+			if err := stopRelayWithDownstream(agent); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "relay token revoked and relay stopped"})
 		})
 
 		apiv1.DELETE("/relay/:id", func(c *gin.Context) {
@@ -482,6 +540,16 @@ func StartLigoloApi() {
 
 		apiv1.GET("/chains", func(c *gin.Context) {
 			c.JSON(http.StatusOK, chainSnapshot())
+		})
+
+		apiv1.GET("/relay/doctor", func(c *gin.Context) {
+			withIPv6, err := strconv.ParseBool(c.DefaultQuery("with_ipv6", "false"))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, inputError)
+				return
+			}
+			interfacePrefix := c.DefaultQuery("interface_prefix", "ligolo")
+			c.JSON(http.StatusOK, relayDoctorReport(withIPv6, interfacePrefix))
 		})
 
 		apiv1.GET("/chain_routes", func(c *gin.Context) {

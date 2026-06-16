@@ -8,21 +8,26 @@ an untracked patchset.
 ```
 git fetch upstream master
 git merge-base --is-ancestor upstream/master HEAD
+git submodule update --init --recursive
 go test ./...
 go build ./cmd/proxy ./cmd/agent
 go build ./cmd/relayctl
 make relay-test
-GITHUB_REPOSITORY_OWNER=<owner> GITHUB_TOKEN=dummy goreleaser release --clean --skip=publish
 ```
 
-For local dry-runs outside GitHub Actions, use a temporary cosign key so the
-checksum signing step does not wait for browser/OIDC auth:
+For local GoReleaser dry-runs outside GitHub Actions, use snapshot mode and a
+temporary cosign key so the checksum signing step does not wait for browser/OIDC
+auth:
 
 ```
 COSIGN_PASSWORD=dryrun cosign generate-key-pair --output-key-prefix /tmp/ligolo-dryrun
 COSIGN_KEY=/tmp/ligolo-dryrun.key COSIGN_PASSWORD=dryrun \
   GITHUB_REPOSITORY_OWNER=<owner> GITHUB_TOKEN=dummy \
-  goreleaser release --clean --skip=publish
+  goreleaser release --snapshot --clean --skip=publish
+cosign verify-blob \
+  --bundle dist/checksums.txt.sigstore.json \
+  --key /tmp/ligolo-dryrun.pub \
+  dist/checksums.txt
 ```
 
 ## Artifacts
@@ -50,6 +55,8 @@ hash against `checksums.txt`, then verifying that file:
 ```
 cosign verify-blob \
   --bundle dist/checksums.txt.sigstore.json \
+  --certificate-identity "https://github.com/<owner>/ligolo-ng-relay/.github/workflows/release.yml@refs/tags/<version>" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   dist/checksums.txt
 ```
 
@@ -74,6 +81,8 @@ gh run watch --repo <owner>/ligolo-ng-relay
 gh release download v0.0.0-oidc-smoke --dir /tmp/ligolo-oidc-smoke
 cosign verify-blob \
   --bundle /tmp/ligolo-oidc-smoke/checksums.txt.sigstore.json \
+  --certificate-identity "https://github.com/<owner>/ligolo-ng-relay/.github/workflows/release.yml@refs/tags/v0.0.0-oidc-smoke" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   /tmp/ligolo-oidc-smoke/checksums.txt
 cosign verify \
   --certificate-identity "https://github.com/<owner>/ligolo-ng-relay/.github/workflows/release.yml@refs/tags/v0.0.0-oidc-smoke" \

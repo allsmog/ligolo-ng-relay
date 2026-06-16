@@ -25,11 +25,14 @@ Key changes:
 - agent relay listener and bridge handling in `pkg/agent/relay.go`
 - proxy-side relay registration and topology tracking in `pkg/controller/agent.go`
   and `pkg/proxy/chain.go`
-- CLI commands: `relay_start`, `relay_stop`, `chain_list`, `chain_list --json`
+- CLI commands: `relay_start`, `relay_stop`, `relay_token_rotate`,
+  `relay_token_revoke`, `relay_doctor`, `chain_list`, `chain_list --json`
 - REST endpoints: `POST /api/v1/relay/:id`, `DELETE /api/v1/relay/:id`,
-  `GET /api/v1/chains`, `GET /api/v1/chain_routes`,
-  `POST /api/v1/chain_autoroute`
+  `POST /api/v1/relay/:id/token`, `DELETE /api/v1/relay/:id/token`,
+  `GET /api/v1/relay/doctor`, `GET /api/v1/chains`,
+  `GET /api/v1/chain_routes`, `POST /api/v1/chain_autoroute`
 - scriptable client: `relayctl`
+- relay tokens expire by default, can be one-time, and can be rotated or revoked
 - Docker integration lab: `make relay-test`
 
 ### UDP Scan Feedback

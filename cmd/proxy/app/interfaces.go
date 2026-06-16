@@ -531,13 +531,13 @@ func init() {
 			t := table.NewWriter()
 			t.SetStyle(table.StyleLight)
 			t.SetTitle("Chain route candidates")
-			t.AppendHeader(table.Row{"Agent ID", "Agent", "Hop", "Via", "Interface", "Route"})
+			t.AppendHeader(table.Row{"Agent ID", "Agent", "Hop", "Via", "Interface", "Route", "Warning"})
 			for _, route := range routes {
 				via := "direct"
 				if route.ParentSessionID != "" {
 					via = route.ParentSessionID
 				}
-				t.AppendRow(table.Row{route.AgentID, route.Name, route.HopDepth, via, route.Interface, route.Route})
+				t.AppendRow(table.Row{route.AgentID, route.Name, route.HopDepth, via, route.Interface, route.Route, route.Warning})
 			}
 			App.Println(t.Render())
 			return nil

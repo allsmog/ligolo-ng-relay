@@ -48,6 +48,7 @@ const (
 	MessageRelayResponse
 	MessageRelayNewConnection
 	MessageRelayBridgeRequest
+	MessageRelayEvent
 )
 
 const (
@@ -210,8 +211,10 @@ type AgentKillRequestPacket struct{}
 
 // RelayRequestPacket is sent by the proxy to instruct an agent to start a relay listener
 type RelayRequestPacket struct {
-	ListenAddr    string
-	AuthTokenHash string
+	ListenAddr             string
+	AuthTokenHash          string
+	AuthTokenExpiresAtUnix int64
+	OneTimeToken           bool
 }
 
 // RelayResponsePacket is the response to RelayRequestPacket
@@ -230,4 +233,12 @@ type RelayNewConnectionPacket struct {
 // RelayBridgeRequestPacket is sent by the proxy to the agent to bridge a yamux stream to a pending downstream connection
 type RelayBridgeRequestPacket struct {
 	ConnectionID int32
+}
+
+// RelayEventPacket is sent by a relay agent to report relay lifecycle and auth events.
+type RelayEventPacket struct {
+	Kind       string
+	RemoteAddr string
+	Message    string
+	AtUnix     int64
 }

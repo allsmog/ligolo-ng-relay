@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 )
 
 // MaxChainDepth is the maximum number of agents allowed in a relay chain branch,
@@ -192,33 +193,41 @@ func (cm *ChainManager) GetDescendantSessionIDs(relaySessionID string) []string 
 
 // AgentInfo is a minimal interface for rendering the chain tree.
 type AgentInfo struct {
-	AgentID         int
-	Name            string
-	SessionID       string
-	RemoteAddr      string
-	RelayActive     bool
-	RelayListenAddr string
-	Alive           bool
-	PathRTTMS       *int64
-	Running         bool
-	ParentSessionID string
+	AgentID              int
+	Name                 string
+	SessionID            string
+	RemoteAddr           string
+	RelayActive          bool
+	RelayListenAddr      string
+	RelayCertFingerprint string
+	RelayTokenExpiresAt  *time.Time
+	RelayTokenExpired    bool
+	RelayOneTimeToken    bool
+	Alive                bool
+	PathRTTMS            *int64
+	Running              bool
+	ParentSessionID      string
 }
 
 type ChainNode struct {
-	AgentID         int         `json:"agent_id"`
-	Name            string      `json:"name"`
-	SessionID       string      `json:"session_id"`
-	RemoteAddr      string      `json:"remote_addr"`
-	ParentSessionID string      `json:"parent_session_id"`
-	HopDepth        int         `json:"hop_depth"`
-	Alive           bool        `json:"alive"`
-	State           string      `json:"state"`
-	PathRTTMS       *int64      `json:"path_rtt_ms,omitempty"`
-	TunnelRunning   bool        `json:"tunnel_running"`
-	RelayActive     bool        `json:"relay_active"`
-	RelayListenAddr string      `json:"relay_listen_addr"`
-	DownstreamCount int         `json:"downstream_count"`
-	Children        []ChainNode `json:"children,omitempty"`
+	AgentID              int         `json:"agent_id"`
+	Name                 string      `json:"name"`
+	SessionID            string      `json:"session_id"`
+	RemoteAddr           string      `json:"remote_addr"`
+	ParentSessionID      string      `json:"parent_session_id"`
+	HopDepth             int         `json:"hop_depth"`
+	Alive                bool        `json:"alive"`
+	State                string      `json:"state"`
+	PathRTTMS            *int64      `json:"path_rtt_ms,omitempty"`
+	TunnelRunning        bool        `json:"tunnel_running"`
+	RelayActive          bool        `json:"relay_active"`
+	RelayListenAddr      string      `json:"relay_listen_addr"`
+	RelayCertFingerprint string      `json:"relay_fingerprint,omitempty"`
+	RelayTokenExpiresAt  *time.Time  `json:"relay_token_expires_at,omitempty"`
+	RelayTokenExpired    bool        `json:"relay_token_expired"`
+	RelayOneTimeToken    bool        `json:"relay_one_time_token"`
+	DownstreamCount      int         `json:"downstream_count"`
+	Children             []ChainNode `json:"children,omitempty"`
 }
 
 type ChainSnapshot struct {
@@ -335,19 +344,23 @@ func (cm *ChainManager) buildNode(agent AgentInfo, agentMap map[string]AgentInfo
 	}
 	children := cm.childrenFor(agent.SessionID, agentMap)
 	node := ChainNode{
-		AgentID:         agent.AgentID,
-		Name:            agent.Name,
-		SessionID:       agent.SessionID,
-		RemoteAddr:      agent.RemoteAddr,
-		ParentSessionID: agent.ParentSessionID,
-		HopDepth:        cm.depthLocked(agent.SessionID),
-		Alive:           agent.Alive,
-		State:           state,
-		PathRTTMS:       agent.PathRTTMS,
-		TunnelRunning:   agent.Running,
-		RelayActive:     agent.RelayActive,
-		RelayListenAddr: agent.RelayListenAddr,
-		DownstreamCount: len(children),
+		AgentID:              agent.AgentID,
+		Name:                 agent.Name,
+		SessionID:            agent.SessionID,
+		RemoteAddr:           agent.RemoteAddr,
+		ParentSessionID:      agent.ParentSessionID,
+		HopDepth:             cm.depthLocked(agent.SessionID),
+		Alive:                agent.Alive,
+		State:                state,
+		PathRTTMS:            agent.PathRTTMS,
+		TunnelRunning:        agent.Running,
+		RelayActive:          agent.RelayActive,
+		RelayListenAddr:      agent.RelayListenAddr,
+		RelayCertFingerprint: agent.RelayCertFingerprint,
+		RelayTokenExpiresAt:  agent.RelayTokenExpiresAt,
+		RelayTokenExpired:    agent.RelayTokenExpired,
+		RelayOneTimeToken:    agent.RelayOneTimeToken,
+		DownstreamCount:      len(children),
 	}
 	for _, child := range children {
 		node.Children = append(node.Children, cm.buildNode(child, agentMap))

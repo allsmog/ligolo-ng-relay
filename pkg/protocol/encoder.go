@@ -74,6 +74,8 @@ func payloadTypeFromInterface(payload interface{}) (uint8, error) {
 		return MessageRelayNewConnection, nil
 	case RelayBridgeRequestPacket:
 		return MessageRelayBridgeRequest, nil
+	case RelayEventPacket:
+		return MessageRelayEvent, nil
 	default:
 		return 0, fmt.Errorf("payloadTypeFromInterface called for unknown payload type: %v", payload)
 	}

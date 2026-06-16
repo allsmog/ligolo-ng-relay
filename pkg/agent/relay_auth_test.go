@@ -6,6 +6,7 @@ package agent
 import (
 	"net"
 	"testing"
+	"time"
 )
 
 func TestRelayAuthHandshakeAcceptsMatchingToken(t *testing.T) {
@@ -16,7 +17,7 @@ func TestRelayAuthHandshakeAcceptsMatchingToken(t *testing.T) {
 	token := "relay-secret"
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- verifyRelayAuth(server, RelayAuthTokenHash(token))
+		errCh <- verifyRelayAuth(server, RelayAuthTokenHash(token), time.Now().Add(time.Minute).Unix())
 	}()
 
 	if err := WriteRelayAuth(client, token); err != nil {
@@ -34,7 +35,7 @@ func TestRelayAuthHandshakeRejectsWrongToken(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- verifyRelayAuth(server, RelayAuthTokenHash("expected"))
+		errCh <- verifyRelayAuth(server, RelayAuthTokenHash("expected"), time.Now().Add(time.Minute).Unix())
 	}()
 
 	if err := WriteRelayAuth(client, "wrong"); err != nil {
@@ -50,8 +51,27 @@ func TestRelayAuthHandshakeAllowsEmptyHash(t *testing.T) {
 	defer client.Close()
 	defer server.Close()
 
-	if err := verifyRelayAuth(server, ""); err != nil {
+	if err := verifyRelayAuth(server, "", 0); err != nil {
 		t.Fatalf("verify relay auth with empty hash: %v", err)
+	}
+}
+
+func TestRelayAuthHandshakeRejectsExpiredToken(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	token := "relay-secret"
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- verifyRelayAuth(server, RelayAuthTokenHash(token), time.Now().Add(-time.Minute).Unix())
+	}()
+
+	if err := WriteRelayAuth(client, token); err != nil {
+		t.Fatalf("write relay auth: %v", err)
+	}
+	if err := <-errCh; err == nil {
+		t.Fatal("verify relay auth succeeded with expired token")
 	}
 }
 

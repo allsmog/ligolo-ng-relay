@@ -78,6 +78,9 @@ model and adds recursive relay chains for multi-pivot operator workflows.
 
 - `make relay-test` runs a Docker lab with a proxy, a direct relay agent, a
   nested relay agent, and a downstream agent connected through the relay chain.
+- [doc/QUICKSTART_RELAY.md](doc/QUICKSTART_RELAY.md) gives the copy-paste
+  operator path for `Proxy -> Agent A relay -> Agent B`, including `relayctl
+  doctor`, token rotation, and revocation.
 - [doc/RELAY_API.md](doc/RELAY_API.md) documents scriptable relay control and
   structured chain status, including the `relayctl` helper.
 - `chain_routes`, `chain_autoroute`, and `relayctl chain-autoroute` help set up
@@ -116,7 +119,9 @@ This allows running tools like *nmap* without the use of *proxychains* (simpler 
 
 Core setup and usage are inherited from Ligolo-ng and remain documented in the
 [Ligolo-ng Documentation](https://docs.ligolo.ng/). Fork-specific relay-chain
-usage lives in [ENHANCEMENTS.md](ENHANCEMENTS.md) and [doc/RELAY_API.md](doc/RELAY_API.md).
+usage lives in [ENHANCEMENTS.md](ENHANCEMENTS.md),
+[doc/QUICKSTART_RELAY.md](doc/QUICKSTART_RELAY.md), and
+[doc/RELAY_API.md](doc/RELAY_API.md).
 
 ## Does it require Administrator/root access ?
 

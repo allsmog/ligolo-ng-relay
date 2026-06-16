@@ -10,6 +10,8 @@ still applies.
 Operational docs:
 
 - [FORK-DELTA.md](FORK-DELTA.md) tracks the fork's upstream base and exact delta.
+- [doc/QUICKSTART_RELAY.md](doc/QUICKSTART_RELAY.md) gives a first-run relay
+  workflow from direct Agent A to downstream Agent B.
 - [doc/RELAY_API.md](doc/RELAY_API.md) documents relay automation and structured
   chain status, including the `relayctl` helper.
 - [test/relay/README.md](test/relay/README.md) explains the Docker relay lab.
@@ -59,8 +61,11 @@ full chain.
 
 | Command | Description |
 | --- | --- |
-| `relay_start --addr <ip:port>` | Start a relay listener on the current agent |
+| `relay_start --addr <ip:port> [--token-ttl 8h] [--one-time-token]` | Start a relay listener on the current agent |
 | `relay_stop` | Stop the relay on the current agent |
+| `relay_token_rotate` | Restart the relay with a fresh token and disconnect descendants |
+| `relay_token_revoke` | Revoke relay access by stopping the relay listener |
+| `relay_doctor` | Display relay health, token status, recent events, and route warnings |
 | `chain_list` | Display the relay chain topology |
 | `chain_list --json` | Display structured chain status for automation |
 | `chain_routes` | Display route candidates across direct and relayed agents |
@@ -70,9 +75,12 @@ full chain.
 
 | Method & path | Description |
 | --- | --- |
-| `POST /api/v1/relay/:id` | Start relay (body: `{"ListenAddr": "<agent-interface-ip>:11602"}`) |
+| `POST /api/v1/relay/:id` | Start relay (body: `{"ListenAddr": "<agent-interface-ip>:11602", "TokenTTLSeconds": 28800}`) |
 | `DELETE /api/v1/relay/:id` | Stop relay |
+| `POST /api/v1/relay/:id/token` | Rotate the active relay token and restart the listener |
+| `DELETE /api/v1/relay/:id/token` | Revoke the active token and stop relay mode |
 | `GET /api/v1/chains` | Get human and structured chain topology |
+| `GET /api/v1/relay/doctor` | Get relay diagnostics, recent auth failures, and route warnings |
 | `GET /api/v1/chain_routes` | Get route candidates across the chain |
 | `POST /api/v1/chain_autoroute` | Configure per-agent routes/interfaces |
 
@@ -87,15 +95,21 @@ full chain.
   single host (useful for testing chains locally).
 - `relay_start` and the REST API return a fingerprint-pinned downstream connect
   command using `-accept-fingerprint` plus a proxy-minted `-relay-token`.
+- Relay tokens expire by default after **8 hours**. Operators can set shorter
+  lifetimes or one-time tokens, rotate active tokens, or revoke access by
+  stopping the relay.
+- Relay diagnostics distinguish relay-down/control-channel failures from
+  downstream auth rejection, pending connection overload, depth rejection, and
+  duplicate route candidates.
 - Stopping a relay now closes downstream sessions registered through that relay
   and prunes their chain links.
 - Structured chain status reports online/offline state and cached proxy-to-agent
-  `path_rtt_ms` when the health probe succeeds.
+  `path_rtt_ms`, relay fingerprint, and token expiry metadata when available.
 
 **Implementation:** new protocol messages (`RelayRequest`, `RelayResponse`,
-`RelayNewConnection`, `RelayBridgeRequest`), an agent-side relay listener with
-self-signed TLS, and a `ChainManager` that tracks topology, enforces depth limits,
-and detects circular chains.
+`RelayNewConnection`, `RelayBridgeRequest`, `RelayEvent`), an agent-side relay
+listener with self-signed TLS, and a `ChainManager` that tracks topology,
+enforces depth limits, and detects circular chains.
 
 ---
 
