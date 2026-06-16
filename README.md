@@ -74,24 +74,29 @@ model and adds recursive relay chains for multi-pivot operator workflows.
 - **Multi-hop agent chaining (relay mode)** for pivoting through segmented networks (see [ENHANCEMENTS.md](ENHANCEMENTS.md))
 - **Relay operations dashboard and `relayctl ops`** for chain health, route
   conflicts, token state, and automation gates
+- **Smart relay automation** for route planning, safe repair actions, parent
+  failover, and opt-in bounded auto-heal reconciliation
 - **ICMP Port Unreachable** responses for fast UDP port scanning
 
 ## Fork verification
 
 - `make relay-test` runs a Docker lab with a proxy, a direct relay agent, a
-  nested relay agent, and a downstream agent connected through the relay chain.
+  nested relay agent, and a downstream agent connected through the relay chain,
+  including auto-heal failover preview and apply.
 - [doc/QUICKSTART_RELAY.md](doc/QUICKSTART_RELAY.md) gives the copy-paste
   operator path for `Proxy -> Agent A relay -> Agent B`, including `relayctl
   doctor`, token rotation, and revocation.
 - [doc/RELAY_API.md](doc/RELAY_API.md) documents scriptable relay control and
   structured chain status, including the `relayctl` helper.
 - `chain_routes`, `chain_plan`, `chain_repair`, `chain_failover`,
-  `chain_autoroute`, `relayctl chain-plan`, `relayctl chain-failover`, and
-  `relayctl ops --fail-on-warning` help preview, repair, re-parent, apply, and
-  gate per-agent routes across direct and relayed sessions.
+  `chain_autoroute`, `relayctl chain-plan`, `relayctl chain-repair`,
+  `relayctl chain-failover`, `relayctl autoheal`, and
+  `relayctl ops --fail-on-warning` help preview, repair, re-parent, reconcile,
+  apply, and gate per-agent routes across direct and relayed sessions.
 - The Web UI **Relay** page exposes the same relay operations report with
   topology, mesh health, smart route-plan decisions, repair and failover
-  recommendations, suggested actions, relay start, and token controls.
+  recommendations, suggested actions, auto-heal status, relay start, and token
+  controls.
 - [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) covers Docker Compose, systemd, and
   Helm deployment patterns for production hosts.
 - [doc/UDP_SCAN_BENCHMARK.md](doc/UDP_SCAN_BENCHMARK.md) describes how to measure
