@@ -11,6 +11,7 @@ export interface RelayOpsReport {
   mesh_health?: RelayMeshHealth[];
   repair_plan: ChainRepairPlan;
   failover_plan: ChainFailoverPlan;
+  auto_heal: RelayAutoHealStatus;
 }
 
 export interface RelayOpsSummary {
@@ -44,6 +45,45 @@ export interface RelayOpsAction {
   agent_id?: number;
   title: string;
   detail?: string;
+}
+
+export interface RelayAutoHealStatus {
+  generated_at: string;
+  running: boolean;
+  policy: RelayAutoHealPolicy;
+  last_run?: RelayAutoHealRun;
+  next_run_at?: string;
+}
+
+export interface RelayAutoHealPolicy {
+  enabled: boolean;
+  apply: boolean;
+  interval_seconds: number;
+  with_ipv6: boolean;
+  interface_prefix: string;
+  start_tunnels: boolean;
+  repair: boolean;
+  prune_conflicts: boolean;
+  failover: boolean;
+  max_repair_actions: number;
+  max_failovers: number;
+}
+
+export interface RelayAutoHealRun {
+  started_at: string;
+  completed_at: string;
+  status: "ok" | "warning" | "error" | string;
+  mode: "monitor" | "apply" | string;
+  policy: RelayAutoHealPolicy;
+  applied: number;
+  failed: number;
+  repair_applied: number;
+  repair_failed: number;
+  failover_applied: number;
+  failover_failed: number;
+  warnings?: string[];
+  repair_plan?: ChainRepairPlan;
+  failover_plan?: ChainFailoverPlan;
 }
 
 export interface ChainSnapshot {

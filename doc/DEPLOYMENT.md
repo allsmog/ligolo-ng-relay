@@ -116,6 +116,25 @@ Use `--all` only during controlled maintenance windows. Apply mode updates the
 selected downstream agent's reconnect target, then closes its old session so the
 agent reconnects through the recommended parent.
 
+Preview a bounded auto-heal run without applying changes:
+
+```sh
+relayctl -api http://127.0.0.1:8080 -user ligolo -password "$LIGOLO_WEB_PASSWORD" \
+  autoheal --run
+```
+
+Apply one bounded reconciliation pass:
+
+```sh
+relayctl -api http://127.0.0.1:8080 -user ligolo -password "$LIGOLO_WEB_PASSWORD" \
+  autoheal --run --apply --max-repair-actions 10 --max-failovers 1
+```
+
+For continuous reconciliation, set `relay.autoheal.enabled: true` in
+`ligolo-ng-relay.yaml` or start the proxy with `-relay-autoheal`. The loop runs
+in monitor mode unless `relay.autoheal.apply: true` or `-relay-autoheal-apply`
+is set. Keep `max_failovers` low for production windows.
+
 Apply selected routes and start missing tunnels:
 
 ```sh
@@ -134,5 +153,7 @@ relayctl -api http://127.0.0.1:8080 -user ligolo -password "$LIGOLO_WEB_PASSWORD
 `chain-repair` turns those decisions into safe route ensures, tunnel starts, and
 optional duplicate-route pruning. `chain-failover` identifies relayed agents
 that have a safer or lower-cost parent and can apply selected reconnect target
-changes. `ops --fail-on-warning` surfaces degraded mesh paths, expired relay
-tokens, route conflicts, failover recommendations, and suggested repair actions.
+changes. `autoheal` combines the supported repair and failover apply paths under
+per-run limits for monitor or apply mode. `ops --fail-on-warning` surfaces
+degraded mesh paths, expired relay tokens, route conflicts, failover
+recommendations, and suggested repair actions.

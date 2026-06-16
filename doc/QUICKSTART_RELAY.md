@@ -140,6 +140,23 @@ relayctl -api http://127.0.0.1:8080 -token "$TOKEN" \
 Use `--all` only when every supported recommendation should be applied. Apply
 mode requires downstream agents to keep reconnect enabled, which is the default.
 
+Preview a bounded auto-heal pass:
+
+```
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" autoheal --run
+```
+
+Apply one bounded auto-heal pass:
+
+```
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" \
+  autoheal --run --apply --max-repair-actions 10 --max-failovers 1
+```
+
+Continuous auto-heal is disabled by default. Start the proxy with
+`-relay-autoheal` for monitor mode, or `-relay-autoheal-apply` when the
+background reconciler should apply supported repairs and failovers.
+
 Configure selected route/interface entries:
 
 ```

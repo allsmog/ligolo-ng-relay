@@ -805,6 +805,7 @@ export default function RelayPage() {
   const meshHealth = relayOps?.mesh_health ?? [];
   const repairPlan = relayOps?.repair_plan;
   const failoverPlan = relayOps?.failover_plan;
+  const autoHeal = relayOps?.auto_heal;
 
   const metricCards = useMemo(() => {
     const summary = relayOps?.summary;
@@ -1040,6 +1041,57 @@ export default function RelayPage() {
           )}
         </section>
       </div>
+
+      <section className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <ShieldCheck size={18} />
+          <h2 className="text-lg font-semibold">Auto-heal</h2>
+          <Chip
+            color={
+              autoHeal?.policy.enabled
+                ? autoHeal.policy.apply
+                  ? "warning"
+                  : "primary"
+                : "default"
+            }
+            size="sm"
+            variant="flat"
+          >
+            {autoHeal?.policy.enabled
+              ? autoHeal.policy.apply
+                ? "apply"
+                : "monitor"
+              : "disabled"}
+          </Chip>
+          {autoHeal?.running ? (
+            <Chip color="primary" size="sm" variant="dot">
+              running
+            </Chip>
+          ) : null}
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-lg border border-default-200 px-4 py-3">
+            <p className="text-xs uppercase text-default-500">Interval</p>
+            <p className="mt-1 text-sm font-medium">
+              {autoHeal?.policy.interval_seconds ?? 0}s
+            </p>
+          </div>
+          <div className="rounded-lg border border-default-200 px-4 py-3">
+            <p className="text-xs uppercase text-default-500">Last run</p>
+            <p className="mt-1 text-sm font-medium">
+              {autoHeal?.last_run
+                ? `${autoHeal.last_run.status} / ${autoHeal.last_run.applied} applied`
+                : "none"}
+            </p>
+          </div>
+          <div className="rounded-lg border border-default-200 px-4 py-3">
+            <p className="text-xs uppercase text-default-500">Next run</p>
+            <p className="mt-1 text-sm font-medium">
+              {formatDate(autoHeal?.next_run_at)}
+            </p>
+          </div>
+        </div>
+      </section>
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center gap-2">

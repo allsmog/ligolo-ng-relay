@@ -22,9 +22,9 @@ smart `chain_route_plan` duplicate-CIDR decision, verifies `chain_repair_plan`
 and `chain_repair` safe route repair, verifies `chain_failover_plan` parent
 recommendations, rechecks traffic after an idle period, verifies descendant
 cleanup when Agent B's relay is stopped, re-forms Agent C through Agent B,
-applies a controlled failover for Agent C to Agent A, and checks Agent C remains
-live after Agent B is killed. It also verifies the `relayctl doctor`
-diagnostics endpoint.
+previews auto-heal failover, applies a bounded auto-heal failover for Agent C to
+Agent A, and checks Agent C remains live after Agent B is killed. It also
+verifies the `relayctl doctor` diagnostics endpoint.
 
 Requirements:
 

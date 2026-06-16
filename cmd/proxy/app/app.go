@@ -463,6 +463,7 @@ type RelayOpsReport struct {
 	MeshHealth   []RelayMeshHealth   `json:"mesh_health,omitempty"`
 	RepairPlan   ChainRepairPlan     `json:"repair_plan"`
 	FailoverPlan ChainFailoverPlan   `json:"failover_plan"`
+	AutoHeal     RelayAutoHealStatus `json:"auto_heal"`
 }
 
 type RelayOpsSummary struct {
@@ -594,6 +595,7 @@ func relayOpsReport(includeIPv6 bool, interfacePrefix string) RelayOpsReport {
 		MeshHealth:   meshHealth,
 		RepairPlan:   repairPlan,
 		FailoverPlan: failoverPlan,
+		AutoHeal:     RelayAutoHealStatusSnapshot(),
 	}
 	report.Summary = relayOpsSummary(doctor, routePlan, meshHealth, repairPlan, failoverPlan)
 	report.Summary.Warnings = len(warnings)

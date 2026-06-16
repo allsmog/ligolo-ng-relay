@@ -236,3 +236,85 @@ func TestRunChainFailoverApplyRequiresSelector(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestRunAutoHealQueriesStatusEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/relay/autoheal" {
+			t.Fatalf("path = %q, want /api/v1/relay/autoheal", r.URL.Path)
+		}
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %q, want GET", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"running":false,"policy":{"enabled":false}}`))
+	}))
+	defer server.Close()
+
+	c := &client{
+		baseURL:    server.URL,
+		token:      "test-token",
+		httpClient: server.Client(),
+	}
+	if err := runAutoHeal(c, nil); err != nil {
+		t.Fatalf("runAutoHeal: %v", err)
+	}
+}
+
+func TestRunAutoHealRunPostsPolicyRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/relay/autoheal/run" {
+			t.Fatalf("path = %q, want /api/v1/relay/autoheal/run", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %q, want POST", r.Method)
+		}
+		var req struct {
+			Apply            bool
+			WithIPv6         bool
+			InterfacePrefix  string
+			StartTunnels     bool
+			Repair           bool
+			PruneConflicts   bool
+			Failover         bool
+			MaxRepairActions int
+			MaxFailovers     int
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if !req.Apply || !req.WithIPv6 || req.InterfacePrefix != "relaytest" || !req.StartTunnels || !req.PruneConflicts {
+			t.Fatalf("request flags = %+v, want apply, IPv6, relaytest, start, prune", req)
+		}
+		if req.Repair || !req.Failover {
+			t.Fatalf("repair/failover = %+v, want repair disabled and failover enabled", req)
+		}
+		if req.MaxRepairActions != 3 || req.MaxFailovers != 2 {
+			t.Fatalf("limits = %d/%d, want 3/2", req.MaxRepairActions, req.MaxFailovers)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"warning","mode":"apply","applied":1}`))
+	}))
+	defer server.Close()
+
+	c := &client{
+		baseURL:    server.URL,
+		token:      "test-token",
+		httpClient: server.Client(),
+	}
+	err := runAutoHeal(c, []string{
+		"--run",
+		"--apply",
+		"--with-ipv6",
+		"--interface-prefix", "relaytest",
+		"--start",
+		"--prune-conflicts",
+		"--repair=false",
+		"--max-repair-actions", "3",
+		"--max-failovers", "2",
+	})
+	if err != nil {
+		t.Fatalf("runAutoHeal run: %v", err)
+	}
+}

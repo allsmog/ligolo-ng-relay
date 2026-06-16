@@ -207,6 +207,19 @@ route, repair, and failover plans:
       "no_alternative": 0
     },
     "recommendations": []
+  },
+  "auto_heal": {
+    "running": false,
+    "policy": {
+      "enabled": false,
+      "apply": false,
+      "interval_seconds": 30,
+      "interface_prefix": "ligolo",
+      "repair": true,
+      "failover": true,
+      "max_repair_actions": 10,
+      "max_failovers": 1
+    }
   }
 }
 ```
@@ -284,6 +297,36 @@ then close its old session so its normal reconnect loop joins through the
 recommended relay parent. This requires reconnect to be enabled on the agent
 process, which is the default.
 
+Inspect relay auto-heal status:
+
+```
+curl -fsS http://127.0.0.1:8080/api/v1/relay/autoheal \
+  -H "Authorization: $TOKEN" | jq
+```
+
+Run one monitor-only reconciliation pass:
+
+```
+curl -fsS http://127.0.0.1:8080/api/v1/relay/autoheal/run \
+  -H "Authorization: $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"Apply":false,"Repair":true,"Failover":true,"MaxRepairActions":10,"MaxFailovers":1}' | jq
+```
+
+Run one bounded apply pass:
+
+```
+curl -fsS http://127.0.0.1:8080/api/v1/relay/autoheal/run \
+  -H "Authorization: $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"Apply":true,"Repair":true,"Failover":true,"StartTunnels":false,"PruneConflicts":false,"MaxRepairActions":10,"MaxFailovers":1}' | jq
+```
+
+The background reconciler is disabled by default. Enable monitor mode with
+`relay.autoheal.enabled: true` or `-relay-autoheal`. Set
+`relay.autoheal.apply: true` or use `-relay-autoheal-apply` only when supported
+repair and failover actions should be applied automatically.
+
 Configure selected per-agent route/interface entries across the chain:
 
 ```
@@ -312,6 +355,9 @@ relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-failover
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-failover --include-commands
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-failover --apply --sessions agent-c
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-failover --apply --all
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" autoheal
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" autoheal --run
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" autoheal --run --apply --max-failovers 1
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-autoroute --interface-prefix ligolo
 ```
 
@@ -324,7 +370,8 @@ relay chain is handed to operators or automation.
 The Web UI includes a **Relay** page at `/relay`. It polls the same
 `/api/v1/relay/ops` report and exposes summary metrics, topology, mesh health,
 smart route-plan decisions, repair actions, failover recommendations, suggested
-actions, relay start, and relay token rotation or revocation controls.
+actions, auto-heal status, relay start, and relay token rotation or revocation
+controls.
 
 Environment variable equivalents are supported:
 

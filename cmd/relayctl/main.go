@@ -76,6 +76,8 @@ func main() {
 		err = runChainRepair(c, args)
 	case "chain-failover":
 		err = runChainFailover(c, args)
+	case "autoheal":
+		err = runAutoHeal(c, args)
 	case "chain-autoroute":
 		err = runChainAutoroute(c, args)
 	case "relay-start":
@@ -104,6 +106,7 @@ func usage() {
   relayctl [global flags] chain-plan [--with-ipv6] [--interface-prefix ligolo] [--start]
   relayctl [global flags] chain-repair [--with-ipv6] [--interface-prefix ligolo] [--start] [--prune-conflicts] [--apply]
   relayctl [global flags] chain-failover [--include-commands] [--apply] [--all] [--sessions session-a,session-b] [--agents 2,3]
+  relayctl [global flags] autoheal [--run] [--apply] [--with-ipv6] [--interface-prefix ligolo] [--start] [--prune-conflicts] [--repair=false] [--failover=false] [--max-repair-actions 10] [--max-failovers 1]
   relayctl [global flags] chain-autoroute [--with-ipv6] [--interface-prefix ligolo] [--start]
   relayctl [global flags] relay-start --agent id --listen 127.0.0.1:11602 [--relay-token token] [--token-ttl 8h] [--one-time-token]
   relayctl [global flags] relay-stop --agent id
@@ -273,6 +276,37 @@ func parseCSVInts(value string) ([]int, error) {
 		values = append(values, parsed)
 	}
 	return values, nil
+}
+
+func runAutoHeal(c *client, args []string) error {
+	fs := flag.NewFlagSet("autoheal", flag.ExitOnError)
+	run := fs.Bool("run", false, "run one relay auto-heal reconciliation")
+	apply := fs.Bool("apply", false, "apply supported repair and failover actions")
+	withIPv6 := fs.Bool("with-ipv6", false, "include IPv6 route candidates")
+	interfacePrefix := fs.String("interface-prefix", "ligolo", "interface prefix")
+	start := fs.Bool("start", false, "include or apply tunnel start repair actions")
+	pruneConflicts := fs.Bool("prune-conflicts", false, "remove configured lower-ranked duplicate routes")
+	repair := fs.Bool("repair", true, "include repair actions")
+	failover := fs.Bool("failover", true, "include failover recommendations")
+	maxRepairActions := fs.Int("max-repair-actions", 10, "maximum repair actions to attempt per run")
+	maxFailovers := fs.Int("max-failovers", 1, "maximum failover recommendations to attempt per run")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if !*run {
+		return c.print("GET", "/api/v1/relay/autoheal", nil)
+	}
+	return c.print("POST", "/api/v1/relay/autoheal/run", map[string]any{
+		"Apply":            *apply,
+		"WithIPv6":         *withIPv6,
+		"InterfacePrefix":  *interfacePrefix,
+		"StartTunnels":     *start,
+		"Repair":           *repair,
+		"PruneConflicts":   *pruneConflicts,
+		"Failover":         *failover,
+		"MaxRepairActions": *maxRepairActions,
+		"MaxFailovers":     *maxFailovers,
+	})
 }
 
 func runChainAutoroute(c *client, args []string) error {

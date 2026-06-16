@@ -75,6 +75,7 @@ full chain.
 | `chain_plan` / `relayctl chain-plan` | Dry-run smart route decisions before writing config |
 | `chain_repair` / `relayctl chain-repair` | Dry-run or apply safe route repair actions |
 | `chain_failover` / `relayctl chain-failover` | Dry-run or apply safer relay parent recommendations |
+| `relayctl autoheal` | Inspect or run bounded relay auto-heal reconciliation |
 | `chain_autoroute` | Configure per-agent routes/interfaces across the chain |
 | `relayctl ops --fail-on-warning` | Print the relay operations report and fail when health is not `ok` |
 
@@ -89,6 +90,8 @@ full chain.
 | `GET /api/v1/chains` | Get human and structured chain topology |
 | `GET /api/v1/relay/doctor` | Get relay diagnostics, recent auth failures, and route warnings |
 | `GET /api/v1/relay/ops` | Get dashboard-ready relay summary counters and suggested actions |
+| `GET /api/v1/relay/autoheal` | Get relay auto-heal policy, run state, and last run |
+| `POST /api/v1/relay/autoheal/run` | Run one bounded monitor or apply reconciliation pass |
 | `GET /api/v1/chain_routes` | Get route candidates across the chain |
 | `GET /api/v1/chain_route_plan` | Dry-run smart route decisions with conflict resolution |
 | `GET /api/v1/chain_repair_plan` | Dry-run safe route repair and manual recovery actions |
@@ -101,8 +104,8 @@ full chain.
 
 The Web UI includes a **Relay** page that polls `/api/v1/relay/ops` and gives
 operators summary metrics, chain topology, mesh health, smart route-plan
-decisions, repair actions, failover recommendations, suggested actions, relay
-start, and relay token rotation or revocation controls.
+decisions, repair actions, failover recommendations, suggested actions,
+auto-heal status, relay start, and relay token rotation or revocation controls.
 
 ### Notes & limits
 
@@ -135,6 +138,8 @@ start, and relay token rotation or revocation controls.
   or `include_commands=true`; apply mode updates selected agents' reconnect
   targets and closes their old sessions so the existing reconnect loop can join
   through the recommended parent.
+- Relay auto-heal is disabled by default and can run in monitor or apply mode.
+  Apply mode reuses the supported repair and failover paths with per-run limits.
 - Stopping a relay now closes downstream sessions registered through that relay
   and prunes their chain links.
 - Structured chain status reports online/offline state and cached proxy-to-agent

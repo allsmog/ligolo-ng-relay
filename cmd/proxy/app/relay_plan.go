@@ -206,6 +206,10 @@ func chainFailoverPlan(includeCommands bool) ChainFailoverPlan {
 }
 
 func applyChainFailoverPlan(includeCommands bool, all bool, sessionIDs []string, agentIDs []int) ChainFailoverPlan {
+	return applyChainFailoverPlanWithLimit(includeCommands, all, sessionIDs, agentIDs, 0)
+}
+
+func applyChainFailoverPlanWithLimit(includeCommands bool, all bool, sessionIDs []string, agentIDs []int, maxRecommendations int) ChainFailoverPlan {
 	plan := chainFailoverPlan(includeCommands)
 	selectedSessions := selectedFailoverSessions(all, sessionIDs, agentIDs, plan.Recommendations)
 
@@ -216,6 +220,7 @@ func applyChainFailoverPlan(includeCommands bool, all bool, sessionIDs []string,
 	}
 	AgentListMutex.Unlock()
 
+	attempted := 0
 	for index := range plan.Recommendations {
 		recommendation := &plan.Recommendations[index]
 		if !selectedSessions[recommendation.SessionID] {
@@ -234,6 +239,10 @@ func applyChainFailoverPlan(includeCommands bool, all bool, sessionIDs []string,
 			recommendation.Error = "agent is not registered"
 			continue
 		}
+		if maxRecommendations > 0 && attempted >= maxRecommendations {
+			continue
+		}
+		attempted++
 		if err := applyChainFailoverRecommendation(agent, *recommendation.RecommendedParent); err != nil {
 			recommendation.Error = err.Error()
 			continue
@@ -609,6 +618,10 @@ func chainRepairPlan(includeIPv6 bool, interfacePrefix string, start bool, prune
 }
 
 func applyChainRepairPlan(includeIPv6 bool, interfacePrefix string, start bool, pruneConflicts bool) ChainRepairPlan {
+	return applyChainRepairPlanWithLimit(includeIPv6, interfacePrefix, start, pruneConflicts, 0)
+}
+
+func applyChainRepairPlanWithLimit(includeIPv6 bool, interfacePrefix string, start bool, pruneConflicts bool, maxActions int) ChainRepairPlan {
 	plan := chainRepairPlan(includeIPv6, interfacePrefix, start, pruneConflicts)
 	if len(plan.Actions) == 0 {
 		return plan
@@ -622,11 +635,16 @@ func applyChainRepairPlan(includeIPv6 bool, interfacePrefix string, start bool, 
 	AgentListMutex.Unlock()
 
 	startedAgents := make(map[int]bool)
+	attempted := 0
 	for index := range plan.Actions {
 		action := &plan.Actions[index]
 		if !action.ApplySupported {
 			continue
 		}
+		if maxActions > 0 && attempted >= maxActions {
+			continue
+		}
+		attempted++
 		var err error
 		switch action.Type {
 		case repairActionEnsureRoute:

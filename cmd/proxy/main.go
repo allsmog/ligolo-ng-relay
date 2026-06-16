@@ -57,6 +57,8 @@ func main() {
 	var apiEnabled = flag.Bool("api", false, "enable the Web/API server without editing the config file")
 	var apiListenAddr = flag.String("api-laddr", "", "API server listening address (default: 127.0.0.1:8080)")
 	var webDisableUI = flag.Bool("no-web-ui", false, "disable the embedded Web UI while keeping the API server available")
+	var relayAutoHeal = flag.Bool("relay-autoheal", false, "enable the relay auto-heal reconciler")
+	var relayAutoHealApply = flag.Bool("relay-autoheal-apply", false, "allow relay auto-heal to apply supported repairs and failovers")
 	var webUser string
 	var webPassword string
 	var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to `file`")
@@ -97,6 +99,13 @@ func main() {
 	}
 	if *webDisableUI {
 		config.Config.Set("web.enableui", false)
+	}
+	if *relayAutoHeal {
+		config.Config.Set("relay.autoheal.enabled", true)
+	}
+	if *relayAutoHealApply {
+		config.Config.Set("relay.autoheal.enabled", true)
+		config.Config.Set("relay.autoheal.apply", true)
 	}
 	if webUser != "" || webPassword != "" {
 		if webUser == "" || webPassword == "" {
@@ -210,6 +219,7 @@ func main() {
 		logrus.Infof("Starting Ligolo-ng Web, API URL is set to: %s", app.GetAPIUrl())
 		go app.StartLigoloApi()
 	}
+	app.StartRelayAutoHealFromConfig()
 
 	if *daemonMode {
 		proxyController.WaitForFinished()

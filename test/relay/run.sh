@@ -292,9 +292,13 @@ AGENT_C_ID="$(wait_for_agent agent-c)"
 assert_agent_c_chain
 verify_agent_c_listener "restored agent C listener did not relay after reconnect"
 
-echo "== apply failover for agent C to agent A =="
-failover_apply="$(api_post chain_failover '{"SessionIDs":["agent-c"],"IncludeCommands":true}')"
-echo "$failover_apply" | jq -e '(.summary.applied == 1) and ([.recommendations[] | select(.session_id == "agent-c" and .recommended_parent.session_id == "agent-a" and .applied == true and .apply_supported == true and (.connect_command | contains("-relay-token")))] | length == 1)' >/dev/null
+echo "== preview auto-heal failover for agent C to agent A =="
+autoheal_monitor="$(api_post relay/autoheal/run '{"Apply":false,"Repair":false,"Failover":true,"MaxFailovers":1}')"
+echo "$autoheal_monitor" | jq -e '(.mode == "monitor") and (.applied == 0) and (.failover_plan.summary.recommendations >= 1) and ([.failover_plan.recommendations[] | select(.session_id == "agent-c" and .recommended_parent.session_id == "agent-a" and .apply_supported == true)] | length == 1)' >/dev/null
+
+echo "== apply auto-heal failover for agent C to agent A =="
+autoheal_apply="$(api_post relay/autoheal/run '{"Apply":true,"Repair":false,"Failover":true,"MaxFailovers":1}')"
+echo "$autoheal_apply" | jq -e '(.mode == "apply") and (.failover_applied == 1) and (.failed == 0) and ([.failover_plan.recommendations[] | select(.session_id == "agent-c" and .recommended_parent.session_id == "agent-a" and .applied == true and .apply_supported == true)] | length == 1)' >/dev/null
 assert_agent_c_failed_over_to_a
 verify_agent_c_listener "failed-over agent C listener did not relay after reconnect"
 

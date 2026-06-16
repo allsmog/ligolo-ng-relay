@@ -470,6 +470,85 @@ func TestApplyChainFailoverPlanUpdatesReconnectTarget(t *testing.T) {
 	}
 }
 
+func TestRunRelayAutoHealMonitorPlansFailoverWithoutApplying(t *testing.T) {
+	resetAppTestState(t)
+
+	reconnectRequests := make(chan protocol.AgentReconnectRequestPacket, 1)
+	agentpkg.SetReconnectRequestHandler(func(request protocol.AgentReconnectRequestPacket) error {
+		reconnectRequests <- request
+		return nil
+	})
+	t.Cleanup(func() {
+		agentpkg.SetReconnectRequestHandler(nil)
+	})
+	seedFailoverTestAgents(t, testYamuxSessionWithAgentHandler(t))
+
+	run := runRelayAutoHeal(RelayAutoHealPolicy{
+		Apply:    false,
+		Repair:   false,
+		Failover: true,
+	})
+	if run.Mode != relayAutoHealModeMonitor {
+		t.Fatalf("mode = %q, want monitor", run.Mode)
+	}
+	if run.Applied != 0 || run.FailoverApplied != 0 {
+		t.Fatalf("applied = %d/%d, want 0/0", run.Applied, run.FailoverApplied)
+	}
+	if run.FailoverPlan == nil || run.FailoverPlan.Summary.Recommendations != 1 {
+		t.Fatalf("failover recommendations = %+v, want one recommendation", run.FailoverPlan)
+	}
+	select {
+	case request := <-reconnectRequests:
+		t.Fatalf("unexpected reconnect request in monitor mode: %+v", request)
+	default:
+	}
+}
+
+func TestRunRelayAutoHealApplyFailoverUpdatesReconnectTarget(t *testing.T) {
+	resetAppTestState(t)
+
+	reconnectRequests := make(chan protocol.AgentReconnectRequestPacket, 1)
+	agentpkg.SetReconnectRequestHandler(func(request protocol.AgentReconnectRequestPacket) error {
+		reconnectRequests <- request
+		return nil
+	})
+	t.Cleanup(func() {
+		agentpkg.SetReconnectRequestHandler(nil)
+	})
+	seedFailoverTestAgents(t, testYamuxSessionWithAgentHandler(t))
+
+	run := runRelayAutoHeal(RelayAutoHealPolicy{
+		Apply:        true,
+		Repair:       false,
+		Failover:     true,
+		MaxFailovers: 1,
+	})
+	if run.Mode != relayAutoHealModeApply {
+		t.Fatalf("mode = %q, want apply", run.Mode)
+	}
+	if run.FailoverApplied != 1 || run.FailoverFailed != 0 {
+		t.Fatalf("failover applied/failed = %d/%d, want 1/0", run.FailoverApplied, run.FailoverFailed)
+	}
+	if run.Applied != 1 || run.Failed != 0 {
+		t.Fatalf("run applied/failed = %d/%d, want 1/0", run.Applied, run.Failed)
+	}
+
+	select {
+	case request := <-reconnectRequests:
+		if request.ConnectAddr != "127.0.0.1:11602" {
+			t.Fatalf("connect addr = %q, want 127.0.0.1:11602", request.ConnectAddr)
+		}
+		if request.AcceptFingerprint != "FINGERPRINTA" {
+			t.Fatalf("fingerprint = %q, want FINGERPRINTA", request.AcceptFingerprint)
+		}
+		if request.RelayToken != "token-a" {
+			t.Fatalf("relay token = %q, want token-a", request.RelayToken)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for reconnect request")
+	}
+}
+
 func resetAppTestState(t *testing.T) {
 	oldAgentList := AgentList
 	oldChainMgr := ChainMgr
@@ -494,6 +573,41 @@ func resetAppTestState(t *testing.T) {
 		pathRTTCache.entries = oldPathRTTEntries
 		pathRTTCache.Unlock()
 	})
+}
+
+func seedFailoverTestAgents(t *testing.T, agentCSession *yamux.Session) {
+	t.Helper()
+
+	expires := time.Now().Add(time.Hour)
+	AgentList[1] = &controller.LigoloAgent{
+		Name:                 "root@agent-a",
+		SessionID:            "agent-a",
+		Session:              testYamuxSession(t),
+		RelayActive:          true,
+		RelayListenAddr:      "127.0.0.1:11602",
+		RelayCertFingerprint: "FINGERPRINTA",
+		RelayAuthToken:       "token-a",
+		RelayTokenExpiresAt:  expires,
+	}
+	AgentList[2] = &controller.LigoloAgent{
+		Name:                 "root@agent-b",
+		SessionID:            "agent-b",
+		Session:              testYamuxSession(t),
+		RelayActive:          true,
+		RelayListenAddr:      "127.0.0.1:11603",
+		RelayCertFingerprint: "FINGERPRINTB",
+		RelayAuthToken:       "token-b",
+		RelayTokenExpiresAt:  expires,
+	}
+	AgentList[3] = &controller.LigoloAgent{
+		Name:      "root@agent-c",
+		SessionID: "agent-c",
+		Session:   agentCSession,
+	}
+	ChainMgr.AddLink("agent-b", "agent-c")
+	cachePathRTT("agent-a", 10)
+	cachePathRTT("agent-b", 50)
+	cachePathRTT("agent-c", 70)
 }
 
 func testYamuxSession(t *testing.T) *yamux.Session {

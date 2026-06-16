@@ -562,6 +562,27 @@ func StartLigoloApi() {
 			c.JSON(http.StatusOK, relayOpsReport(withIPv6, interfacePrefix))
 		})
 
+		apiv1.GET("/relay/autoheal", func(c *gin.Context) {
+			c.JSON(http.StatusOK, RelayAutoHealStatusSnapshot())
+		})
+
+		apiv1.POST("/relay/autoheal/run", func(c *gin.Context) {
+			var req RelayAutoHealRunRequest
+			if c.Request.Body != nil && c.Request.ContentLength != 0 {
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, inputError)
+					return
+				}
+			}
+			policy := relayAutoHealPolicyWithOverrides(relayAutoHealPolicyFromConfig(), req)
+			run := RunRelayAutoHealOnce(policy)
+			status := http.StatusOK
+			if run.Status == "error" {
+				status = http.StatusInternalServerError
+			}
+			c.JSON(status, run)
+		})
+
 		apiv1.GET("/chain_routes", func(c *gin.Context) {
 			withIPv6, err := strconv.ParseBool(c.DefaultQuery("with_ipv6", "false"))
 			if err != nil {
