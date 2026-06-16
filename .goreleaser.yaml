@@ -84,7 +84,6 @@ dockers:
     dockerfile: build/package/proxy.Dockerfile
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relay-proxy:{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relay-proxy:latest-amd64"
   - id: proxy-arm64
     ids: ['proxy']
     goos: linux
@@ -92,7 +91,6 @@ dockers:
     dockerfile: build/package/proxy.Dockerfile
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relay-proxy:{{ .Version }}-arm64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relay-proxy:latest-arm64"
   - id: agent-amd64
     ids: ['agent']
     goos: linux
@@ -100,7 +98,6 @@ dockers:
     dockerfile: build/package/agent.Dockerfile
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relay-agent:{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relay-agent:latest-amd64"
   - id: agent-arm64
     ids: ['agent']
     goos: linux
@@ -108,7 +105,6 @@ dockers:
     dockerfile: build/package/agent.Dockerfile
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relay-agent:{{ .Version }}-arm64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relay-agent:latest-arm64"
   - id: relayctl-amd64
     ids: ['relayctl']
     goos: linux
@@ -116,7 +112,6 @@ dockers:
     dockerfile: build/package/relayctl.Dockerfile
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relayctl:{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relayctl:latest-amd64"
   - id: relayctl-arm64
     ids: ['relayctl']
     goos: linux
@@ -124,7 +119,6 @@ dockers:
     dockerfile: build/package/relayctl.Dockerfile
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relayctl:{{ .Version }}-arm64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relayctl:latest-arm64"
 
 docker_manifests:
   - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relay-proxy:{{ .Version }}"
@@ -143,17 +137,12 @@ docker_manifests:
 docker_signs:
   - id: docker-images
     artifacts: all
-    cmd: sh
+    cmd: cosign
     args:
-      - -c
-      - |
-        if [ -n "${COSIGN_KEY:-}" ]; then
-          cosign sign --key "$COSIGN_KEY" "$1" --yes
-        else
-          cosign sign "$1" --yes
-        fi
-      - sh
+      - sign
       - "${artifact}@${digest}"
+      - --yes
+    output: true
 
 sboms:
   - id: archive-sboms
