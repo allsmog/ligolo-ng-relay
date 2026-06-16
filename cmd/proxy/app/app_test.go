@@ -167,6 +167,15 @@ func TestRelayOpsReportSummarizesActionsAndConflicts(t *testing.T) {
 	if report.Summary.RouteConflicts != 2 {
 		t.Fatalf("route conflicts = %d, want 2", report.Summary.RouteConflicts)
 	}
+	if report.Summary.RoutePlanApply != 1 {
+		t.Fatalf("route plan apply = %d, want 1", report.Summary.RoutePlanApply)
+	}
+	if report.Summary.RoutePlanSkipped != 1 {
+		t.Fatalf("route plan skipped = %d, want 1", report.Summary.RoutePlanSkipped)
+	}
+	if report.Summary.MeshDegraded == 0 {
+		t.Fatalf("mesh degraded = 0, want expired relay token to degrade mesh health")
+	}
 	if report.Summary.Warnings == 0 {
 		t.Fatalf("warnings = 0, want at least one")
 	}
@@ -186,6 +195,62 @@ func TestRelayOpsReportSummarizesActionsAndConflicts(t *testing.T) {
 	}
 	if !duplicateRoute {
 		t.Fatalf("missing duplicate route action: %+v", report.Actions)
+	}
+}
+
+func TestChainRoutePlanPrefersLowerCostDuplicate(t *testing.T) {
+	resetAppTestState(t)
+
+	AgentList[1] = &controller.LigoloAgent{
+		Name:      "root@agent-a",
+		SessionID: "agent-a",
+		Session:   testYamuxSession(t),
+		Network: []protocol.NetInterface{
+			{Addresses: []string{"10.20.30.5/24"}},
+		},
+	}
+	AgentList[2] = &controller.LigoloAgent{
+		Name:          "root@agent-b",
+		SessionID:     "agent-b",
+		ParentAgentID: "agent-a",
+		Session:       testYamuxSession(t),
+		Network: []protocol.NetInterface{
+			{Addresses: []string{"10.20.30.8/24"}},
+		},
+	}
+	ChainMgr.AddLink("agent-a", "agent-b")
+	cachePathRTT("agent-a", 10)
+	cachePathRTT("agent-b", 30)
+
+	plan := chainRoutePlan(false, "relaytest", true)
+	if plan.Status != "warning" {
+		t.Fatalf("plan status = %q, want warning", plan.Status)
+	}
+	if plan.Summary.Apply != 1 {
+		t.Fatalf("plan apply = %d, want 1", plan.Summary.Apply)
+	}
+	if plan.Summary.Skipped != 1 {
+		t.Fatalf("plan skipped = %d, want 1", plan.Summary.Skipped)
+	}
+	if plan.Summary.StartTunnels != 1 {
+		t.Fatalf("plan start tunnels = %d, want 1", plan.Summary.StartTunnels)
+	}
+
+	decisionsByAgent := make(map[int]ChainRouteDecision)
+	for _, decision := range plan.Decisions {
+		decisionsByAgent[decision.AgentID] = decision
+	}
+	if got := decisionsByAgent[1]; got.Decision != routeDecisionApply || !got.Preferred {
+		t.Fatalf("agent 1 decision = %+v, want preferred apply", got)
+	}
+	if !decisionsByAgent[1].StartTunnel {
+		t.Fatalf("agent 1 should include tunnel start action: %+v", decisionsByAgent[1])
+	}
+	if got := decisionsByAgent[2]; got.Decision != routeDecisionSkipConflict || got.Preferred {
+		t.Fatalf("agent 2 decision = %+v, want skipped duplicate", got)
+	}
+	if !strings.Contains(decisionsByAgent[2].Reason, "preferred route cost") {
+		t.Fatalf("agent 2 reason = %q, want preferred route cost", decisionsByAgent[2].Reason)
 	}
 }
 

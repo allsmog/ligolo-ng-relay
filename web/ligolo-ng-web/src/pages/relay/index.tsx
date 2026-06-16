@@ -32,6 +32,7 @@ import {
   CheckCircle2,
   GitBranch,
   KeyRound,
+  ListChecks,
   Network,
   Play,
   RefreshCw,
@@ -39,6 +40,7 @@ import {
   Route,
   ShieldCheck,
   Users,
+  Wrench,
 } from "lucide-react";
 import ErrorContext from "@/contexts/Error.tsx";
 import { handleApiResponse } from "@/hooks/toast.ts";
@@ -48,8 +50,10 @@ import useRelayOps from "@/hooks/useRelayOps.ts";
 import { LigoloAgent, LigoloAgentList } from "@/types/agents.ts";
 import {
   ChainNode,
+  ChainRouteDecision,
   ChainRouteInfo,
   RelayDoctorRelay,
+  RelayMeshHealth,
   RelayOpsAction,
 } from "@/types/relay.ts";
 
@@ -93,6 +97,19 @@ function severityColor(severity: string): ChipColor {
   if (severity === "critical") return "danger";
   if (severity === "warning") return "warning";
   return "primary";
+}
+
+function decisionColor(decision: string): ChipColor {
+  if (decision === "apply") return "success";
+  if (decision === "skip_conflict") return "warning";
+  return "default";
+}
+
+function meshStateColor(state: string): ChipColor {
+  if (state === "healthy") return "success";
+  if (state === "offline") return "danger";
+  if (state === "degraded") return "warning";
+  return "default";
 }
 
 function MetricCard({ icon, label, value, tone }: MetricCardProps) {
@@ -339,6 +356,137 @@ function RouteConflictTable({ routes }: { routes: ChainRouteInfo[] }) {
   );
 }
 
+function MeshHealthTable({ health }: { health: RelayMeshHealth[] }) {
+  return (
+    <Table aria-label="Relay mesh health">
+      <TableHeader>
+        <TableColumn className="uppercase">Agent</TableColumn>
+        <TableColumn className="uppercase">State</TableColumn>
+        <TableColumn className="uppercase">Path</TableColumn>
+        <TableColumn className="uppercase">Issues</TableColumn>
+        <TableColumn className="uppercase">Recovery</TableColumn>
+      </TableHeader>
+      <TableBody emptyContent={"No mesh health data."}>
+        <>
+          {health.map((item) => (
+            <TableRow key={item.session_id}>
+              <TableCell>
+                <div className="flex flex-col">
+                  <p className="text-sm font-semibold">{item.name}</p>
+                  <p className="text-xs text-default-500">
+                    #{item.agent_id} - {item.session_id}
+                  </p>
+                </div>
+              </TableCell>
+              <TableCell>
+                <Chip color={meshStateColor(item.state)} size="sm" variant="flat">
+                  {item.state}
+                </Chip>
+              </TableCell>
+              <TableCell>
+                <div className="flex flex-col text-xs text-default-500">
+                  <span>Hop {item.hop_depth}</span>
+                  <span>{item.path_rtt_ms ?? "-"} ms</span>
+                  <span>{item.downstream_count} downstream</span>
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="flex max-w-[260px] flex-wrap gap-1">
+                  {(item.issues ?? []).length > 0 ? (
+                    item.issues?.map((issue) => (
+                      <Chip key={issue} color="warning" size="sm" variant="flat">
+                        {issue}
+                      </Chip>
+                    ))
+                  ) : (
+                    <span className="text-default-400">-</span>
+                  )}
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="flex max-w-[320px] flex-col gap-1">
+                  {(item.recovery_actions ?? []).length > 0 ? (
+                    item.recovery_actions?.map((action) => (
+                      <span key={action} className="text-xs text-default-500">
+                        {action}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-default-400">-</span>
+                  )}
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </>
+      </TableBody>
+    </Table>
+  );
+}
+
+function RoutePlanTable({ decisions }: { decisions: ChainRouteDecision[] }) {
+  return (
+    <Table aria-label="Smart route plan">
+      <TableHeader>
+        <TableColumn className="uppercase">Decision</TableColumn>
+        <TableColumn className="uppercase">Agent</TableColumn>
+        <TableColumn className="uppercase">Route</TableColumn>
+        <TableColumn className="uppercase">Cost</TableColumn>
+        <TableColumn className="uppercase">Reason</TableColumn>
+      </TableHeader>
+      <TableBody emptyContent={"No route plan available."}>
+        <>
+          {decisions.map((decision) => (
+            <TableRow key={`${decision.agent_id}-${decision.route}`}>
+              <TableCell>
+                <div className="flex flex-col gap-1">
+                  <Chip
+                    color={decisionColor(decision.decision)}
+                    size="sm"
+                    variant="flat"
+                  >
+                    {decision.decision}
+                  </Chip>
+                  {decision.start_tunnel ? (
+                    <span className="text-xs text-default-500">Start tunnel</span>
+                  ) : null}
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="flex flex-col">
+                  <p className="text-sm font-semibold">{decision.name}</p>
+                  <p className="text-xs text-default-500">
+                    #{decision.agent_id} - hop {decision.hop_depth}
+                  </p>
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="flex flex-col">
+                  <span>{decision.route}</span>
+                  <span className="text-xs text-default-500">
+                    {decision.interface}
+                  </span>
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="flex flex-col text-xs text-default-500">
+                  <span>{decision.score}</span>
+                  <span>{decision.path_rtt_ms ?? "-"} ms</span>
+                </div>
+              </TableCell>
+              <TableCell>
+                <p className="max-w-[360px] text-sm text-default-500">
+                  {decision.reason}
+                </p>
+              </TableCell>
+            </TableRow>
+          ))}
+        </>
+      </TableBody>
+    </Table>
+  );
+}
+
 function RelayStartModal({
   agents,
   isOpen,
@@ -490,6 +638,8 @@ export default function RelayPage() {
   const actions = relayOps?.actions ?? [];
   const warnings = relayOps?.warnings ?? [];
   const conflicts = (relayOps?.routes ?? []).filter((route) => route.conflict);
+  const routePlan = relayOps?.route_plan;
+  const meshHealth = relayOps?.mesh_health ?? [];
 
   const metricCards = useMemo(() => {
     const summary = relayOps?.summary;
@@ -520,15 +670,27 @@ export default function RelayPage() {
       },
       {
         icon: <Route size={16} />,
-        label: "Route conflicts",
-        value: summary?.route_conflicts ?? 0,
-        tone: summary?.route_conflicts ? "warning" : ("default" as ChipColor),
+        label: "Plan apply",
+        value: summary?.route_plan_apply ?? 0,
+        tone: "success" as ChipColor,
+      },
+      {
+        icon: <ListChecks size={16} />,
+        label: "Plan skipped",
+        value: summary?.route_plan_skipped ?? 0,
+        tone: summary?.route_plan_skipped ? "warning" : ("default" as ChipColor),
       },
       {
         icon: <KeyRound size={16} />,
         label: "Expired tokens",
         value: summary?.expired_tokens ?? 0,
         tone: summary?.expired_tokens ? "danger" : ("default" as ChipColor),
+      },
+      {
+        icon: <Wrench size={16} />,
+        label: "Mesh degraded",
+        value: summary?.mesh_degraded ?? 0,
+        tone: summary?.mesh_degraded ? "warning" : ("success" as ChipColor),
       },
       {
         icon: <AlertTriangle size={16} />,
@@ -641,7 +803,7 @@ export default function RelayPage() {
             startContent={<Route size={18} />}
             onPress={onChainAutoroute}
           >
-            Autoroute
+            Apply plan
           </Button>
           <Button
             color="success"
@@ -705,6 +867,27 @@ export default function RelayPage() {
           )}
         </section>
       </div>
+
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <Wrench size={18} />
+          <h2 className="text-lg font-semibold">Mesh health</h2>
+        </div>
+        <MeshHealthTable health={meshHealth} />
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <ListChecks size={18} />
+          <h2 className="text-lg font-semibold">Smart route plan</h2>
+          {routePlan ? (
+            <Chip color={statusColor(routePlan.status)} size="sm" variant="flat">
+              {routePlan.summary.apply} apply / {routePlan.summary.skipped} skip
+            </Chip>
+          ) : null}
+        </div>
+        <RoutePlanTable decisions={routePlan?.decisions ?? []} />
+      </section>
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center gap-2">

@@ -125,7 +125,8 @@ curl -fsS 'http://127.0.0.1:8080/api/v1/relay/ops?with_ipv6=false&interface_pref
 ```
 
 The ops response wraps the doctor data with a summary and action queue suitable
-for dashboards and CI gates:
+for dashboards and CI gates. It also embeds mesh health and the current smart
+route plan:
 
 ```json
 {
@@ -139,6 +140,12 @@ for dashboards and CI gates:
     "downstream_agents": 1,
     "expired_tokens": 0,
     "route_conflicts": 2,
+    "route_plan_apply": 1,
+    "route_plan_skipped": 1,
+    "mesh_healthy": 1,
+    "mesh_degraded": 1,
+    "mesh_offline": 0,
+    "mesh_repairable": 1,
     "warnings": 1,
     "max_depth": 5
   },
@@ -152,7 +159,20 @@ for dashboards and CI gates:
   ],
   "chain": {},
   "routes": [],
-  "relays": []
+  "relays": [],
+  "route_plan": {
+    "status": "warning",
+    "summary": {
+      "candidates": 2,
+      "apply": 1,
+      "skipped": 1,
+      "conflict_groups": 1,
+      "already_configured": 0,
+      "start_tunnels": 0
+    },
+    "decisions": []
+  },
+  "mesh_health": []
 }
 ```
 
@@ -167,7 +187,18 @@ curl -fsS 'http://127.0.0.1:8080/api/v1/chain_routes?with_ipv6=false&interface_p
   -H "Authorization: $TOKEN" | jq
 ```
 
-Configure per-agent route/interface entries across the chain:
+Dry-run the smart route plan:
+
+```
+curl -fsS 'http://127.0.0.1:8080/api/v1/chain_route_plan?with_ipv6=false&interface_prefix=ligolo&start=true' \
+  -H "Authorization: $TOKEN" | jq
+```
+
+The plan selects one candidate per CIDR. Duplicate candidates are ranked by
+online state, hop depth, cached path RTT, tunnel state, and agent ID; skipped
+candidates include the preferred agent and reason.
+
+Configure selected per-agent route/interface entries across the chain:
 
 ```
 curl -fsS http://127.0.0.1:8080/api/v1/chain_autoroute \
@@ -188,6 +219,7 @@ relayctl -api http://127.0.0.1:8080 -token "$TOKEN" relay-start --agent 1 --list
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" relay-token-rotate --agent 1 --token-ttl 30m
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" relay-token-revoke --agent 1
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-routes
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-plan --interface-prefix ligolo --start
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-autoroute --interface-prefix ligolo
 ```
 
@@ -198,8 +230,8 @@ relay chain is handed to operators or automation.
 ## Web UI
 
 The Web UI includes a **Relay** page at `/relay`. It polls the same
-`/api/v1/relay/ops` report and exposes summary metrics, topology, route
-conflicts, suggested actions, chain autoroute, relay start, and relay token
+`/api/v1/relay/ops` report and exposes summary metrics, topology, mesh health,
+smart route-plan decisions, suggested actions, relay start, and relay token
 rotation or revocation controls.
 
 Environment variable equivalents are supported:

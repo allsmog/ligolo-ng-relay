@@ -572,6 +572,21 @@ func StartLigoloApi() {
 			c.JSON(http.StatusOK, gin.H{"routes": chainRouteInfos(withIPv6, interfacePrefix)})
 		})
 
+		apiv1.GET("/chain_route_plan", func(c *gin.Context) {
+			withIPv6, err := strconv.ParseBool(c.DefaultQuery("with_ipv6", "false"))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, inputError)
+				return
+			}
+			start, err := strconv.ParseBool(c.DefaultQuery("start", "false"))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, inputError)
+				return
+			}
+			interfacePrefix := c.DefaultQuery("interface_prefix", "ligolo")
+			c.JSON(http.StatusOK, chainRoutePlan(withIPv6, interfacePrefix, start))
+		})
+
 		apiv1.POST("/chain_autoroute", func(c *gin.Context) {
 			type ChainAutorouteRequest struct {
 				WithIPv6        bool
@@ -591,7 +606,11 @@ func StartLigoloApi() {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
-			c.JSON(http.StatusOK, gin.H{"message": "chain autoroute configured", "routes": routes})
+			c.JSON(http.StatusOK, gin.H{
+				"message": "chain autoroute configured",
+				"routes":  routes,
+				"plan":    chainRoutePlan(req.WithIPv6, req.InterfacePrefix, req.Start),
+			})
 		})
 
 		apiv1.POST("/tunnel/:id", func(c *gin.Context) {

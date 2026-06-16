@@ -172,8 +172,13 @@ assert_chain_routes() {
 	routes="$(api_get 'chain_routes?with_ipv6=false&interface_prefix=ligolo')"
 	echo "$routes" | jq -e '.routes[] | select(.session_id == "agent-c" and .hop_depth == 2 and (.route | type == "string"))' >/dev/null
 
+	plan="$(api_get 'chain_route_plan?with_ipv6=false&interface_prefix=relaytest&start=false')"
+	echo "$plan" | jq -e '.summary.apply >= 1 and .summary.skipped >= 1' >/dev/null
+	echo "$plan" | jq -e '.decisions[] | select(.session_id == "agent-c" and .hop_depth == 2 and .decision == "skip_conflict" and (.reason | contains("preferred route cost")))' >/dev/null
+
 	autoroute="$(api_post chain_autoroute '{"InterfacePrefix":"relaytest","WithIPv6":false,"Start":false}')"
-	echo "$autoroute" | jq -e '.routes[] | select(.session_id == "agent-c" and .hop_depth == 2 and (.interface | startswith("relaytest")))' >/dev/null
+	echo "$autoroute" | jq -e '.routes[] | select(.session_id == "agent-a" and .hop_depth == 0 and (.interface | startswith("relaytest")))' >/dev/null
+	echo "$autoroute" | jq -e '.plan.decisions[] | select(.session_id == "agent-c" and .decision == "skip_conflict")' >/dev/null
 }
 
 assert_agent_c_chain() {

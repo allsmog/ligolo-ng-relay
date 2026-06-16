@@ -7,6 +7,8 @@ export interface RelayOpsReport {
   chain: ChainSnapshot;
   routes?: ChainRouteInfo[];
   relays?: RelayDoctorRelay[];
+  route_plan: ChainRoutePlan;
+  mesh_health?: RelayMeshHealth[];
 }
 
 export interface RelayOpsSummary {
@@ -18,6 +20,12 @@ export interface RelayOpsSummary {
   downstream_agents: number;
   expired_tokens: number;
   route_conflicts: number;
+  route_plan_apply: number;
+  route_plan_skipped: number;
+  mesh_healthy: number;
+  mesh_degraded: number;
+  mesh_offline: number;
+  mesh_repairable: number;
   warnings: number;
   max_depth: number;
 }
@@ -67,6 +75,63 @@ export interface ChainRouteInfo {
   conflict: boolean;
   conflict_with?: number[];
   warning?: string;
+}
+
+export interface ChainRoutePlan {
+  generated_at: string;
+  status: "ok" | "warning" | string;
+  summary: ChainRoutePlanSummary;
+  warnings?: string[];
+  decisions: ChainRouteDecision[];
+}
+
+export interface ChainRoutePlanSummary {
+  candidates: number;
+  apply: number;
+  skipped: number;
+  conflict_groups: number;
+  already_configured: number;
+  start_tunnels: number;
+}
+
+export interface ChainRouteDecision {
+  agent_id: number;
+  name: string;
+  session_id: string;
+  parent_session_id: string;
+  hop_depth: number;
+  interface: string;
+  route: string;
+  route_key: string;
+  decision: "apply" | "skip_conflict" | string;
+  reason: string;
+  conflict: boolean;
+  conflict_with?: number[];
+  preferred: boolean;
+  score: number;
+  alive: boolean;
+  agent_state: string;
+  path_rtt_ms?: number;
+  tunnel_running: boolean;
+  relay_active: boolean;
+  already_configured: boolean;
+  start_tunnel: boolean;
+}
+
+export interface RelayMeshHealth {
+  agent_id: number;
+  name: string;
+  session_id: string;
+  parent_session_id: string;
+  hop_depth: number;
+  state: "healthy" | "degraded" | "offline" | string;
+  alive: boolean;
+  path_rtt_ms?: number;
+  tunnel_running: boolean;
+  relay_active: boolean;
+  downstream_count: number;
+  issues?: string[];
+  recovery_actions?: string[];
 }
 
 export interface RelayDoctorRelay {

@@ -94,7 +94,17 @@ Preview route candidates first:
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-routes
 ```
 
-Configure route/interface entries:
+Preview the smart route plan before writing config:
+
+```
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" \
+  chain-plan --interface-prefix ligolo --start
+```
+
+The plan selects one candidate per CIDR using online state, hop depth, path RTT,
+and agent ID. Duplicate lower-ranked candidates are skipped with a reason.
+
+Configure selected route/interface entries:
 
 ```
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" \

@@ -15,6 +15,8 @@ Operational docs:
   workflow from direct Agent A to downstream Agent B.
 - [doc/RELAY_API.md](doc/RELAY_API.md) documents relay automation and structured
   chain status, including the `relayctl` helper.
+- [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) covers Docker Compose, systemd, Helm,
+  and production smoke gates.
 - [test/relay/README.md](test/relay/README.md) explains the Docker relay lab.
 - [doc/UDP_SCAN_BENCHMARK.md](doc/UDP_SCAN_BENCHMARK.md) covers scan speed and
   classification benchmarks.
@@ -70,6 +72,7 @@ full chain.
 | `chain_list` | Display the relay chain topology |
 | `chain_list --json` | Display structured chain status for automation |
 | `chain_routes` | Display route candidates across direct and relayed agents |
+| `chain_plan` / `relayctl chain-plan` | Dry-run smart route decisions before writing config |
 | `chain_autoroute` | Configure per-agent routes/interfaces across the chain |
 | `relayctl ops --fail-on-warning` | Print the relay operations report and fail when health is not `ok` |
 
@@ -85,13 +88,15 @@ full chain.
 | `GET /api/v1/relay/doctor` | Get relay diagnostics, recent auth failures, and route warnings |
 | `GET /api/v1/relay/ops` | Get dashboard-ready relay summary counters and suggested actions |
 | `GET /api/v1/chain_routes` | Get route candidates across the chain |
-| `POST /api/v1/chain_autoroute` | Configure per-agent routes/interfaces |
+| `GET /api/v1/chain_route_plan` | Dry-run smart route decisions with conflict resolution |
+| `POST /api/v1/chain_autoroute` | Configure selected per-agent routes/interfaces |
 
 ### Web UI
 
 The Web UI includes a **Relay** page that polls `/api/v1/relay/ops` and gives
-operators summary metrics, chain topology, route conflicts, suggested actions,
-chain autoroute, relay start, and relay token rotation or revocation controls.
+operators summary metrics, chain topology, mesh health, smart route-plan
+decisions, suggested actions, relay start, and relay token rotation or
+revocation controls.
 
 ### Notes & limits
 
@@ -112,6 +117,9 @@ chain autoroute, relay start, and relay token rotation or revocation controls.
   duplicate route candidates.
 - Relay operations reports condense diagnostics into stable counters and action
   items for scripts, dashboards, and smoke checks.
+- Smart route planning chooses one candidate per CIDR using online state, hop
+  depth, path RTT, tunnel state, and agent ID, then explains skipped duplicate
+  candidates before autoroute writes config.
 - Stopping a relay now closes downstream sessions registered through that relay
   and prunes their chain links.
 - Structured chain status reports online/offline state and cached proxy-to-agent

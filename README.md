@@ -85,12 +85,14 @@ model and adds recursive relay chains for multi-pivot operator workflows.
   doctor`, token rotation, and revocation.
 - [doc/RELAY_API.md](doc/RELAY_API.md) documents scriptable relay control and
   structured chain status, including the `relayctl` helper.
-- `chain_routes`, `chain_autoroute`, `relayctl chain-autoroute`, and
-  `relayctl ops --fail-on-warning` help set up and gate per-agent routes across
-  direct and relayed sessions.
+- `chain_routes`, `chain_route_plan`, `chain_autoroute`, `relayctl chain-plan`, and
+  `relayctl ops --fail-on-warning` help preview, apply, and gate per-agent
+  routes across direct and relayed sessions.
 - The Web UI **Relay** page exposes the same relay operations report with
-  topology, route conflicts, suggested actions, autoroute, relay start, and
-  token controls.
+  topology, mesh health, smart route-plan decisions, suggested actions, relay
+  start, and token controls.
+- [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) covers Docker Compose, systemd, and
+  Helm deployment patterns for production hosts.
 - [doc/UDP_SCAN_BENCHMARK.md](doc/UDP_SCAN_BENCHMARK.md) describes how to measure
   UDP scan speed and classification accuracy.
 - [doc/RESTRICTIVE_EGRESS.md](doc/RESTRICTIVE_EGRESS.md) covers WebSocket, HTTP

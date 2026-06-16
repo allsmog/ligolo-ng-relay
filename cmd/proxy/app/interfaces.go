@@ -545,8 +545,36 @@ func init() {
 	})
 
 	App.AddCommand(&grumble.Command{
+		Name:      "chain_plan",
+		Help:      "Preview smart route decisions across the relay chain",
+		Usage:     "chain_plan [--interface-prefix ligolo] [--with-ipv6] [--start]",
+		HelpGroup: "Relay",
+		Flags: func(f *grumble.Flags) {
+			f.BoolL("with-ipv6", false, "Include IPv6 addresses")
+			f.StringL("interface-prefix", "ligolo", "Interface name prefix for generated interface configs")
+			f.BoolL("start", false, "Include tunnel start actions in the dry-run plan")
+		},
+		Run: func(c *grumble.Context) error {
+			plan := chainRoutePlan(c.Flags.Bool("with-ipv6"), c.Flags.String("interface-prefix"), c.Flags.Bool("start"))
+			if len(plan.Decisions) == 0 {
+				return errors.New("no route candidates available")
+			}
+
+			t := table.NewWriter()
+			t.SetStyle(table.StyleLight)
+			t.SetTitle("Smart chain route plan")
+			t.AppendHeader(table.Row{"Decision", "Agent ID", "Agent", "Hop", "Interface", "Route", "Score", "Reason"})
+			for _, decision := range plan.Decisions {
+				t.AppendRow(table.Row{decision.Decision, decision.AgentID, decision.Name, decision.HopDepth, decision.Interface, decision.Route, decision.Score, decision.Reason})
+			}
+			App.Println(t.Render())
+			return nil
+		},
+	})
+
+	App.AddCommand(&grumble.Command{
 		Name:      "chain_autoroute",
-		Help:      "Configure per-agent interfaces and routes across the relay chain",
+		Help:      "Configure selected per-agent interfaces and routes across the relay chain",
 		Usage:     "chain_autoroute [--interface-prefix ligolo] [--with-ipv6] [--start]",
 		HelpGroup: "Relay",
 		Flags: func(f *grumble.Flags) {

@@ -58,3 +58,33 @@ func TestRunOpsFailsOnWarning(t *testing.T) {
 		t.Fatalf("runOps error = %v", err)
 	}
 }
+
+func TestRunChainPlanQueriesPlanEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/chain_route_plan" {
+			t.Fatalf("path = %q, want /api/v1/chain_route_plan", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("with_ipv6"); got != "true" {
+			t.Fatalf("with_ipv6 = %q, want true", got)
+		}
+		if got := r.URL.Query().Get("interface_prefix"); got != "relaytest" {
+			t.Fatalf("interface_prefix = %q, want relaytest", got)
+		}
+		if got := r.URL.Query().Get("start"); got != "true" {
+			t.Fatalf("start = %q, want true", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok","summary":{"apply":1},"decisions":[]}`))
+	}))
+	defer server.Close()
+
+	c := &client{
+		baseURL:    server.URL,
+		token:      "test-token",
+		httpClient: server.Client(),
+	}
+	if err := runChainPlan(c, []string{"--with-ipv6", "--interface-prefix", "relaytest", "--start"}); err != nil {
+		t.Fatalf("runChainPlan: %v", err)
+	}
+}

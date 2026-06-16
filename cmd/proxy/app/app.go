@@ -316,20 +316,39 @@ func chainRouteInfos(includeIPv6 bool, interfacePrefix string) []ChainRouteInfo 
 }
 
 func configureChainAutoroutes(includeIPv6 bool, interfacePrefix string, start bool) ([]ChainRouteInfo, error) {
-	routes := chainRouteInfos(includeIPv6, interfacePrefix)
-	if len(routes) == 0 {
+	plan := chainRoutePlan(includeIPv6, interfacePrefix, start)
+	if len(plan.Decisions) == 0 {
 		return nil, errors.New("no route candidates available")
 	}
 
 	interfacesByAgent := make(map[int]string)
-	for _, route := range routes {
-		interfacesByAgent[route.AgentID] = route.Interface
-		if err := config.EnsureInterfaceConfig(route.Interface); err != nil {
-			return nil, fmt.Errorf("could not configure interface %s: %w", route.Interface, err)
+	var appliedRoutes []ChainRouteInfo
+	for _, decision := range plan.Decisions {
+		if decision.Decision != routeDecisionApply {
+			continue
 		}
-		if err := config.EnsureRouteConfig(route.Interface, route.Route); err != nil {
-			return nil, fmt.Errorf("could not configure route %s on %s: %w", route.Route, route.Interface, err)
+		interfacesByAgent[decision.AgentID] = decision.Interface
+		if err := config.EnsureInterfaceConfig(decision.Interface); err != nil {
+			return nil, fmt.Errorf("could not configure interface %s: %w", decision.Interface, err)
 		}
+		if err := config.EnsureRouteConfig(decision.Interface, decision.Route); err != nil {
+			return nil, fmt.Errorf("could not configure route %s on %s: %w", decision.Route, decision.Interface, err)
+		}
+		appliedRoutes = append(appliedRoutes, ChainRouteInfo{
+			AgentID:         decision.AgentID,
+			Name:            decision.Name,
+			SessionID:       decision.SessionID,
+			ParentSessionID: decision.ParentSessionID,
+			HopDepth:        decision.HopDepth,
+			Interface:       decision.Interface,
+			Route:           decision.Route,
+			Conflict:        decision.Conflict,
+			ConflictWith:    decision.ConflictWith,
+			Warning:         decision.Reason,
+		})
+	}
+	if len(appliedRoutes) == 0 {
+		return nil, errors.New("route plan did not select any routes to apply")
 	}
 
 	if start {
@@ -357,7 +376,7 @@ func configureChainAutoroutes(includeIPv6 bool, interfacePrefix string, start bo
 		}
 	}
 
-	return routes, nil
+	return appliedRoutes, nil
 }
 
 func relayConnectCommand(listenAddr, fingerprint, authToken string) string {
@@ -440,6 +459,8 @@ type RelayOpsReport struct {
 	Chain       proxy.ChainSnapshot `json:"chain"`
 	Routes      []ChainRouteInfo    `json:"routes,omitempty"`
 	Relays      []RelayDoctorRelay  `json:"relays,omitempty"`
+	RoutePlan   ChainRoutePlan      `json:"route_plan"`
+	MeshHealth  []RelayMeshHealth   `json:"mesh_health,omitempty"`
 }
 
 type RelayOpsSummary struct {
@@ -451,6 +472,12 @@ type RelayOpsSummary struct {
 	DownstreamAgents int `json:"downstream_agents"`
 	ExpiredTokens    int `json:"expired_tokens"`
 	RouteConflicts   int `json:"route_conflicts"`
+	RoutePlanApply   int `json:"route_plan_apply"`
+	RoutePlanSkipped int `json:"route_plan_skipped"`
+	MeshHealthy      int `json:"mesh_healthy"`
+	MeshDegraded     int `json:"mesh_degraded"`
+	MeshOffline      int `json:"mesh_offline"`
+	MeshRepairable   int `json:"mesh_repairable"`
 	Warnings         int `json:"warnings"`
 	MaxDepth         int `json:"max_depth"`
 }
@@ -542,20 +569,42 @@ func relayDoctorReport(includeIPv6 bool, interfacePrefix string) RelayDoctorRepo
 
 func relayOpsReport(includeIPv6 bool, interfacePrefix string) RelayOpsReport {
 	doctor := relayDoctorReport(includeIPv6, interfacePrefix)
+	routePlan := chainRoutePlanFromSnapshot(doctor.Chain, doctor.Routes, false)
+	meshHealth := relayMeshHealth(doctor)
+	warnings := relayOpsWarnings(doctor.Warnings, routePlan, meshHealth)
 	report := RelayOpsReport{
 		GeneratedAt: doctor.GeneratedAt,
-		Status:      doctor.Status,
-		Warnings:    doctor.Warnings,
+		Status:      "ok",
+		Warnings:    warnings,
 		Chain:       doctor.Chain,
 		Routes:      doctor.Routes,
 		Relays:      doctor.Relays,
+		RoutePlan:   routePlan,
+		MeshHealth:  meshHealth,
 	}
-	report.Summary = relayOpsSummary(doctor)
-	report.Actions = relayOpsActions(doctor)
+	report.Summary = relayOpsSummary(doctor, routePlan, meshHealth)
+	report.Summary.Warnings = len(warnings)
+	report.Actions = relayOpsActions(doctor, routePlan, meshHealth)
+	if len(warnings) > 0 {
+		report.Status = "warning"
+	}
 	return report
 }
 
-func relayOpsSummary(report RelayDoctorReport) RelayOpsSummary {
+func relayOpsWarnings(base []string, routePlan ChainRoutePlan, meshHealth []RelayMeshHealth) []string {
+	warnings := append([]string(nil), base...)
+	for _, warning := range routePlan.Warnings {
+		warnings = appendUniqueString(warnings, warning)
+	}
+	for _, item := range meshHealth {
+		for _, issue := range item.Issues {
+			warnings = appendUniqueString(warnings, fmt.Sprintf("agent %d: %s", item.AgentID, issue))
+		}
+	}
+	return warnings
+}
+
+func relayOpsSummary(report RelayDoctorReport, routePlan ChainRoutePlan, meshHealth []RelayMeshHealth) RelayOpsSummary {
 	summary := RelayOpsSummary{
 		MaxDepth: len(report.Chain.Agents),
 		Warnings: len(report.Warnings),
@@ -591,10 +640,17 @@ func relayOpsSummary(report RelayDoctorReport) RelayOpsSummary {
 			summary.RouteConflicts++
 		}
 	}
+	summary.RoutePlanApply = routePlan.Summary.Apply
+	summary.RoutePlanSkipped = routePlan.Summary.Skipped
+	meshSummary := relayMeshHealthSummary(meshHealth)
+	summary.MeshHealthy = meshSummary.Healthy
+	summary.MeshDegraded = meshSummary.Degraded
+	summary.MeshOffline = meshSummary.Offline
+	summary.MeshRepairable = meshSummary.Repairable
 	return summary
 }
 
-func relayOpsActions(report RelayDoctorReport) []RelayOpsAction {
+func relayOpsActions(report RelayDoctorReport, routePlan ChainRoutePlan, meshHealth []RelayMeshHealth) []RelayOpsAction {
 	var actions []RelayOpsAction
 	if len(report.Chain.Agents) == 0 {
 		actions = append(actions, RelayOpsAction{
@@ -641,6 +697,23 @@ func relayOpsActions(report RelayDoctorReport) []RelayOpsAction {
 			Detail:   route.Warning,
 		})
 		seenRouteWarnings[route.Warning] = true
+	}
+	if routePlan.Summary.Skipped > 0 {
+		actions = append(actions, RelayOpsAction{
+			Severity: "warning",
+			Title:    "Review smart route plan",
+			Detail:   fmt.Sprintf("%d duplicate route candidate(s) will be skipped by chain autoroute.", routePlan.Summary.Skipped),
+		})
+	}
+	for _, item := range meshHealth {
+		for _, recoveryAction := range item.RecoveryActions {
+			actions = append(actions, RelayOpsAction{
+				Severity: "warning",
+				AgentID:  item.AgentID,
+				Title:    "Repair degraded relay path",
+				Detail:   recoveryAction,
+			})
+		}
 	}
 	return actions
 }
