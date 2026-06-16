@@ -451,39 +451,43 @@ type RelayDoctorReport struct {
 }
 
 type RelayOpsReport struct {
-	GeneratedAt time.Time           `json:"generated_at"`
-	Status      string              `json:"status"`
-	Summary     RelayOpsSummary     `json:"summary"`
-	Warnings    []string            `json:"warnings,omitempty"`
-	Actions     []RelayOpsAction    `json:"actions,omitempty"`
-	Chain       proxy.ChainSnapshot `json:"chain"`
-	Routes      []ChainRouteInfo    `json:"routes,omitempty"`
-	Relays      []RelayDoctorRelay  `json:"relays,omitempty"`
-	RoutePlan   ChainRoutePlan      `json:"route_plan"`
-	MeshHealth  []RelayMeshHealth   `json:"mesh_health,omitempty"`
-	RepairPlan  ChainRepairPlan     `json:"repair_plan"`
+	GeneratedAt  time.Time           `json:"generated_at"`
+	Status       string              `json:"status"`
+	Summary      RelayOpsSummary     `json:"summary"`
+	Warnings     []string            `json:"warnings,omitempty"`
+	Actions      []RelayOpsAction    `json:"actions,omitempty"`
+	Chain        proxy.ChainSnapshot `json:"chain"`
+	Routes       []ChainRouteInfo    `json:"routes,omitempty"`
+	Relays       []RelayDoctorRelay  `json:"relays,omitempty"`
+	RoutePlan    ChainRoutePlan      `json:"route_plan"`
+	MeshHealth   []RelayMeshHealth   `json:"mesh_health,omitempty"`
+	RepairPlan   ChainRepairPlan     `json:"repair_plan"`
+	FailoverPlan ChainFailoverPlan   `json:"failover_plan"`
 }
 
 type RelayOpsSummary struct {
-	AgentsTotal      int `json:"agents_total"`
-	AgentsOnline     int `json:"agents_online"`
-	DirectAgents     int `json:"direct_agents"`
-	RelayedAgents    int `json:"relayed_agents"`
-	ActiveRelays     int `json:"active_relays"`
-	DownstreamAgents int `json:"downstream_agents"`
-	ExpiredTokens    int `json:"expired_tokens"`
-	RouteConflicts   int `json:"route_conflicts"`
-	RoutePlanApply   int `json:"route_plan_apply"`
-	RoutePlanSkipped int `json:"route_plan_skipped"`
-	MeshHealthy      int `json:"mesh_healthy"`
-	MeshDegraded     int `json:"mesh_degraded"`
-	MeshOffline      int `json:"mesh_offline"`
-	MeshRepairable   int `json:"mesh_repairable"`
-	RepairActions    int `json:"repair_actions"`
-	RepairAutomated  int `json:"repair_automated"`
-	RepairManual     int `json:"repair_manual"`
-	Warnings         int `json:"warnings"`
-	MaxDepth         int `json:"max_depth"`
+	AgentsTotal             int `json:"agents_total"`
+	AgentsOnline            int `json:"agents_online"`
+	DirectAgents            int `json:"direct_agents"`
+	RelayedAgents           int `json:"relayed_agents"`
+	ActiveRelays            int `json:"active_relays"`
+	DownstreamAgents        int `json:"downstream_agents"`
+	ExpiredTokens           int `json:"expired_tokens"`
+	RouteConflicts          int `json:"route_conflicts"`
+	RoutePlanApply          int `json:"route_plan_apply"`
+	RoutePlanSkipped        int `json:"route_plan_skipped"`
+	MeshHealthy             int `json:"mesh_healthy"`
+	MeshDegraded            int `json:"mesh_degraded"`
+	MeshOffline             int `json:"mesh_offline"`
+	MeshRepairable          int `json:"mesh_repairable"`
+	RepairActions           int `json:"repair_actions"`
+	RepairAutomated         int `json:"repair_automated"`
+	RepairManual            int `json:"repair_manual"`
+	FailoverRecommendations int `json:"failover_recommendations"`
+	FailoverAtRisk          int `json:"failover_at_risk"`
+	FailoverCommandReady    int `json:"failover_command_ready"`
+	Warnings                int `json:"warnings"`
+	MaxDepth                int `json:"max_depth"`
 }
 
 type RelayOpsAction struct {
@@ -576,34 +580,42 @@ func relayOpsReport(includeIPv6 bool, interfacePrefix string) RelayOpsReport {
 	routePlan := chainRoutePlanFromSnapshot(doctor.Chain, doctor.Routes, false)
 	meshHealth := relayMeshHealth(doctor)
 	repairPlan := chainRepairPlanFromInputs(routePlan, meshHealth, false)
-	warnings := relayOpsWarnings(doctor.Warnings, routePlan, meshHealth, repairPlan)
+	failoverPlan := chainFailoverPlanFromSnapshot(doctor.Chain, failoverAgentStates(doctor.Chain), false)
+	warnings := relayOpsWarnings(doctor.Warnings, routePlan, meshHealth, repairPlan, failoverPlan)
 	report := RelayOpsReport{
-		GeneratedAt: doctor.GeneratedAt,
-		Status:      "ok",
-		Warnings:    warnings,
-		Chain:       doctor.Chain,
-		Routes:      doctor.Routes,
-		Relays:      doctor.Relays,
-		RoutePlan:   routePlan,
-		MeshHealth:  meshHealth,
-		RepairPlan:  repairPlan,
+		GeneratedAt:  doctor.GeneratedAt,
+		Status:       "ok",
+		Warnings:     warnings,
+		Chain:        doctor.Chain,
+		Routes:       doctor.Routes,
+		Relays:       doctor.Relays,
+		RoutePlan:    routePlan,
+		MeshHealth:   meshHealth,
+		RepairPlan:   repairPlan,
+		FailoverPlan: failoverPlan,
 	}
-	report.Summary = relayOpsSummary(doctor, routePlan, meshHealth, repairPlan)
+	report.Summary = relayOpsSummary(doctor, routePlan, meshHealth, repairPlan, failoverPlan)
 	report.Summary.Warnings = len(warnings)
-	report.Actions = relayOpsActions(doctor, routePlan, meshHealth, repairPlan)
+	report.Actions = relayOpsActions(doctor, routePlan, meshHealth, repairPlan, failoverPlan)
 	if len(warnings) > 0 {
 		report.Status = "warning"
 	}
 	return report
 }
 
-func relayOpsWarnings(base []string, routePlan ChainRoutePlan, meshHealth []RelayMeshHealth, repairPlan ChainRepairPlan) []string {
+func relayOpsWarnings(base []string, routePlan ChainRoutePlan, meshHealth []RelayMeshHealth, repairPlan ChainRepairPlan, failoverPlan ChainFailoverPlan) []string {
 	warnings := append([]string(nil), base...)
 	for _, warning := range routePlan.Warnings {
 		warnings = appendUniqueString(warnings, warning)
 	}
 	if repairPlan.Summary.Actions > 0 {
 		warnings = appendUniqueString(warnings, fmt.Sprintf("repair plan has %d pending action(s)", repairPlan.Summary.Actions))
+	}
+	if failoverPlan.Summary.Recommendations > 0 {
+		warnings = appendUniqueString(warnings, fmt.Sprintf("failover plan has %d recommendation(s)", failoverPlan.Summary.Recommendations))
+	}
+	if failoverPlan.Summary.AtRisk > 0 {
+		warnings = appendUniqueString(warnings, fmt.Sprintf("failover plan has %d at-risk relayed agent(s)", failoverPlan.Summary.AtRisk))
 	}
 	for _, item := range meshHealth {
 		for _, issue := range item.Issues {
@@ -613,7 +625,7 @@ func relayOpsWarnings(base []string, routePlan ChainRoutePlan, meshHealth []Rela
 	return warnings
 }
 
-func relayOpsSummary(report RelayDoctorReport, routePlan ChainRoutePlan, meshHealth []RelayMeshHealth, repairPlan ChainRepairPlan) RelayOpsSummary {
+func relayOpsSummary(report RelayDoctorReport, routePlan ChainRoutePlan, meshHealth []RelayMeshHealth, repairPlan ChainRepairPlan, failoverPlan ChainFailoverPlan) RelayOpsSummary {
 	summary := RelayOpsSummary{
 		MaxDepth: len(report.Chain.Agents),
 		Warnings: len(report.Warnings),
@@ -659,10 +671,13 @@ func relayOpsSummary(report RelayDoctorReport, routePlan ChainRoutePlan, meshHea
 	summary.RepairActions = repairPlan.Summary.Actions
 	summary.RepairAutomated = repairPlan.Summary.ApplySupported
 	summary.RepairManual = repairPlan.Summary.Manual
+	summary.FailoverRecommendations = failoverPlan.Summary.Recommendations
+	summary.FailoverAtRisk = failoverPlan.Summary.AtRisk
+	summary.FailoverCommandReady = failoverPlan.Summary.CommandReady
 	return summary
 }
 
-func relayOpsActions(report RelayDoctorReport, routePlan ChainRoutePlan, meshHealth []RelayMeshHealth, repairPlan ChainRepairPlan) []RelayOpsAction {
+func relayOpsActions(report RelayDoctorReport, routePlan ChainRoutePlan, meshHealth []RelayMeshHealth, repairPlan ChainRepairPlan, failoverPlan ChainFailoverPlan) []RelayOpsAction {
 	var actions []RelayOpsAction
 	if len(report.Chain.Agents) == 0 {
 		actions = append(actions, RelayOpsAction{
@@ -722,6 +737,13 @@ func relayOpsActions(report RelayDoctorReport, routePlan ChainRoutePlan, meshHea
 			Severity: "warning",
 			Title:    "Apply relay repair plan",
 			Detail:   fmt.Sprintf("%d safe repair action(s) can be applied automatically.", repairPlan.Summary.ApplySupported),
+		})
+	}
+	if failoverPlan.Summary.Recommendations > 0 {
+		actions = append(actions, RelayOpsAction{
+			Severity: "warning",
+			Title:    "Review relay failover plan",
+			Detail:   fmt.Sprintf("%d relayed agent(s) have a better or safer parent option.", failoverPlan.Summary.Recommendations),
 		})
 	}
 	for _, item := range meshHealth {

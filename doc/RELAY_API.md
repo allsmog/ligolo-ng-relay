@@ -126,7 +126,7 @@ curl -fsS 'http://127.0.0.1:8080/api/v1/relay/ops?with_ipv6=false&interface_pref
 
 The ops response wraps the doctor data with a summary and action queue suitable
 for dashboards and CI gates. It also embeds mesh health and the current smart
-route plan:
+route, repair, and failover plans:
 
 ```json
 {
@@ -149,6 +149,9 @@ route plan:
     "repair_actions": 2,
     "repair_automated": 1,
     "repair_manual": 1,
+    "failover_recommendations": 1,
+    "failover_at_risk": 0,
+    "failover_command_ready": 1,
     "warnings": 1,
     "max_depth": 5
   },
@@ -189,13 +192,25 @@ route plan:
       "manual": 1
     },
     "actions": []
+  },
+  "failover_plan": {
+    "status": "warning",
+    "summary": {
+      "relayed_agents": 1,
+      "at_risk": 0,
+      "recommendations": 1,
+      "command_ready": 1,
+      "no_alternative": 0
+    },
+    "recommendations": []
   }
 }
 ```
 
 Use `status` as the top-level automation result. `summary` gives stable counters
 for dashboards, and `actions` contains remediation-oriented items derived from
-offline agents, expired relay tokens, relay errors, and route conflicts.
+offline agents, expired relay tokens, relay errors, route conflicts, and parent
+failover recommendations.
 
 Inspect route candidates across all online agents:
 
@@ -236,6 +251,20 @@ Supported apply actions are route config ensures and tunnel starts. Set
 be removed from config and active TUN interfaces. Manual actions such as token
 rotation remain visible in the plan but are not applied automatically.
 
+Dry-run relay parent failover recommendations:
+
+```
+curl -fsS 'http://127.0.0.1:8080/api/v1/chain_failover_plan?include_commands=false' \
+  -H "Authorization: $TOKEN" | jq
+```
+
+The plan evaluates relayed agents and ranks alternate parents by online state,
+relay readiness, token state, hop depth, cached path RTT, and downstream fanout.
+It recommends a parent switch when the current parent is at risk or a valid
+alternate has a lower failover cost. Set `include_commands=true` only for
+trusted output; when a proxy-held relay token is available, recommendations can
+include downstream `agent -connect ... -relay-token ...` commands.
+
 Configure selected per-agent route/interface entries across the chain:
 
 ```
@@ -260,6 +289,8 @@ relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-routes
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-plan --interface-prefix ligolo --start
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-repair --interface-prefix ligolo --start
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-repair --interface-prefix ligolo --start --apply
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-failover
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-failover --include-commands
 relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-autoroute --interface-prefix ligolo
 ```
 
@@ -271,8 +302,8 @@ relay chain is handed to operators or automation.
 
 The Web UI includes a **Relay** page at `/relay`. It polls the same
 `/api/v1/relay/ops` report and exposes summary metrics, topology, mesh health,
-smart route-plan decisions, repair actions, suggested actions, relay start, and
-relay token rotation or revocation controls.
+smart route-plan decisions, repair actions, failover recommendations, suggested
+actions, relay start, and relay token rotation or revocation controls.
 
 Environment variable equivalents are supported:
 

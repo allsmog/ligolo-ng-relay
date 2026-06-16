@@ -49,6 +49,7 @@ import { useApi } from "@/hooks/useApi.ts";
 import useRelayOps from "@/hooks/useRelayOps.ts";
 import { LigoloAgent, LigoloAgentList } from "@/types/agents.ts";
 import {
+  ChainFailoverRecommendation,
   ChainNode,
   ChainRepairAction,
   ChainRouteDecision,
@@ -558,6 +559,83 @@ function RepairPlanTable({ actions }: { actions: ChainRepairAction[] }) {
   );
 }
 
+function FailoverPlanTable({
+  recommendations,
+}: {
+  recommendations: ChainFailoverRecommendation[];
+}) {
+  return (
+    <Table aria-label="Relay failover plan">
+      <TableHeader>
+        <TableColumn className="uppercase">Agent</TableColumn>
+        <TableColumn className="uppercase">Current Parent</TableColumn>
+        <TableColumn className="uppercase">Recommended Parent</TableColumn>
+        <TableColumn className="uppercase">Command</TableColumn>
+        <TableColumn className="uppercase">Reason</TableColumn>
+      </TableHeader>
+      <TableBody emptyContent={"No failover recommendations."}>
+        <>
+          {recommendations.map((recommendation) => (
+            <TableRow key={recommendation.session_id}>
+              <TableCell>
+                <div className="flex flex-col">
+                  <p className="text-sm font-semibold">{recommendation.name}</p>
+                  <p className="text-xs text-default-500">
+                    #{recommendation.agent_id} - hop {recommendation.hop_depth}
+                  </p>
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="flex flex-col">
+                  <span>{recommendation.current_parent_name || "-"}</span>
+                  <span className="text-xs text-default-500">
+                    {recommendation.current_parent_session_id}
+                  </span>
+                  {(recommendation.current_parent_issues ?? []).map((issue) => (
+                    <Chip key={issue} color="warning" size="sm" variant="flat">
+                      {issue}
+                    </Chip>
+                  ))}
+                </div>
+              </TableCell>
+              <TableCell>
+                {recommendation.recommended_parent ? (
+                  <div className="flex flex-col">
+                    <span>{recommendation.recommended_parent.name}</span>
+                    <span className="text-xs text-default-500">
+                      #{recommendation.recommended_parent.agent_id} - hop{" "}
+                      {recommendation.recommended_parent.hop_depth}
+                    </span>
+                    <span className="text-xs text-default-500">
+                      {recommendation.recommended_parent.path_rtt_ms ?? "-"} ms
+                    </span>
+                  </div>
+                ) : (
+                  <span className="text-default-400">-</span>
+                )}
+              </TableCell>
+              <TableCell>
+                <Chip
+                  color={recommendation.command_available ? "success" : "default"}
+                  size="sm"
+                  variant="flat"
+                >
+                  {recommendation.command_available ? "available" : "manual"}
+                </Chip>
+              </TableCell>
+              <TableCell>
+                <p className="max-w-[360px] text-sm text-default-500">
+                  {recommendation.reason}
+                </p>
+              </TableCell>
+            </TableRow>
+          ))}
+        </>
+      </TableBody>
+    </Table>
+  );
+}
+
 function RelayStartModal({
   agents,
   isOpen,
@@ -712,6 +790,7 @@ export default function RelayPage() {
   const routePlan = relayOps?.route_plan;
   const meshHealth = relayOps?.mesh_health ?? [];
   const repairPlan = relayOps?.repair_plan;
+  const failoverPlan = relayOps?.failover_plan;
 
   const metricCards = useMemo(() => {
     const summary = relayOps?.summary;
@@ -763,6 +842,14 @@ export default function RelayPage() {
         label: "Repairs",
         value: summary?.repair_actions ?? 0,
         tone: summary?.repair_actions ? "warning" : ("success" as ChipColor),
+      },
+      {
+        icon: <GitBranch size={16} />,
+        label: "Failovers",
+        value: summary?.failover_recommendations ?? 0,
+        tone: summary?.failover_recommendations
+          ? "warning"
+          : ("default" as ChipColor),
       },
       {
         icon: <AlertTriangle size={16} />,
@@ -973,6 +1060,22 @@ export default function RelayPage() {
           ) : null}
         </div>
         <RepairPlanTable actions={repairPlan?.actions ?? []} />
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <GitBranch size={18} />
+          <h2 className="text-lg font-semibold">Failover plan</h2>
+          {failoverPlan ? (
+            <Chip color={statusColor(failoverPlan.status)} size="sm" variant="flat">
+              {failoverPlan.summary.recommendations} recommended /{" "}
+              {failoverPlan.summary.command_ready} ready
+            </Chip>
+          ) : null}
+        </div>
+        <FailoverPlanTable
+          recommendations={failoverPlan?.recommendations ?? []}
+        />
       </section>
 
       <section className="flex flex-col gap-3">

@@ -158,3 +158,27 @@ func TestRunChainRepairApplyPostsRepairRequest(t *testing.T) {
 		t.Fatalf("runChainRepair apply: %v", err)
 	}
 }
+
+func TestRunChainFailoverQueriesPlanEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/chain_failover_plan" {
+			t.Fatalf("path = %q, want /api/v1/chain_failover_plan", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("include_commands"); got != "true" {
+			t.Fatalf("include_commands = %q, want true", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"warning","summary":{"recommendations":1},"recommendations":[]}`))
+	}))
+	defer server.Close()
+
+	c := &client{
+		baseURL:    server.URL,
+		token:      "test-token",
+		httpClient: server.Client(),
+	}
+	if err := runChainFailover(c, []string{"--include-commands"}); err != nil {
+		t.Fatalf("runChainFailover: %v", err)
+	}
+}

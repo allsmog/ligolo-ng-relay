@@ -130,10 +130,312 @@ type ChainRepairAction struct {
 	Error          string `json:"error,omitempty"`
 }
 
+type ChainFailoverPlan struct {
+	GeneratedAt     time.Time                     `json:"generated_at"`
+	Status          string                        `json:"status"`
+	Summary         ChainFailoverPlanSummary      `json:"summary"`
+	Recommendations []ChainFailoverRecommendation `json:"recommendations,omitempty"`
+}
+
+type ChainFailoverPlanSummary struct {
+	RelayedAgents   int `json:"relayed_agents"`
+	AtRisk          int `json:"at_risk"`
+	Recommendations int `json:"recommendations"`
+	CommandReady    int `json:"command_ready"`
+	NoAlternative   int `json:"no_alternative"`
+}
+
+type ChainFailoverRecommendation struct {
+	AgentID                int                   `json:"agent_id"`
+	Name                   string                `json:"name"`
+	SessionID              string                `json:"session_id"`
+	HopDepth               int                   `json:"hop_depth"`
+	CurrentParentAgentID   int                   `json:"current_parent_agent_id,omitempty"`
+	CurrentParentName      string                `json:"current_parent_name,omitempty"`
+	CurrentParentSessionID string                `json:"current_parent_session_id"`
+	CurrentParentIssues    []string              `json:"current_parent_issues,omitempty"`
+	Reason                 string                `json:"reason"`
+	RecommendedParent      *ChainFailoverParent  `json:"recommended_parent,omitempty"`
+	Alternatives           []ChainFailoverParent `json:"alternatives,omitempty"`
+	CommandAvailable       bool                  `json:"command_available"`
+	ConnectCommand         string                `json:"connect_command,omitempty"`
+}
+
+type ChainFailoverParent struct {
+	AgentID          int        `json:"agent_id"`
+	Name             string     `json:"name"`
+	SessionID        string     `json:"session_id"`
+	HopDepth         int        `json:"hop_depth"`
+	ListenAddr       string     `json:"listen_addr"`
+	Fingerprint      string     `json:"fingerprint,omitempty"`
+	TokenExpiresAt   *time.Time `json:"token_expires_at,omitempty"`
+	TokenExpired     bool       `json:"token_expired"`
+	OneTimeToken     bool       `json:"one_time_token"`
+	OneTimeTokenUsed bool       `json:"one_time_token_used"`
+	PathRTTMS        *int64     `json:"path_rtt_ms,omitempty"`
+	DownstreamCount  int        `json:"downstream_count"`
+	Score            int        `json:"score"`
+	CommandAvailable bool       `json:"command_available"`
+	BlockedReason    string     `json:"blocked_reason,omitempty"`
+	authToken        string     `json:"-"`
+}
+
+type failoverAgentState struct {
+	node      proxy.ChainNode
+	relay     controller.RelayStatus
+	authToken string
+}
+
 func chainRoutePlan(includeIPv6 bool, interfacePrefix string, start bool) ChainRoutePlan {
 	snapshot := chainSnapshot()
 	routes := chainRouteInfos(includeIPv6, interfacePrefix)
 	return chainRoutePlanFromSnapshot(snapshot, routes, start)
+}
+
+func chainFailoverPlan(includeCommands bool) ChainFailoverPlan {
+	snapshot := chainSnapshot()
+	return chainFailoverPlanFromSnapshot(snapshot, failoverAgentStates(snapshot), includeCommands)
+}
+
+func chainFailoverPlanFromSnapshot(snapshot proxy.ChainSnapshot, states map[string]failoverAgentState, includeCommands bool) ChainFailoverPlan {
+	plan := ChainFailoverPlan{
+		GeneratedAt: time.Now(),
+		Status:      "ok",
+	}
+	walkChainNodes(snapshot.Agents, func(node proxy.ChainNode) {
+		if node.ParentSessionID == "" {
+			return
+		}
+		plan.Summary.RelayedAgents++
+		currentParent, hasCurrentParent := states[node.ParentSessionID]
+		var currentIssues []string
+		if hasCurrentParent {
+			currentIssues = failoverParentIssues(currentParent)
+		} else {
+			currentIssues = []string{"current parent is not registered"}
+		}
+		if len(currentIssues) > 0 {
+			plan.Summary.AtRisk++
+		}
+
+		candidates := failoverCandidatesFor(node, states)
+		if len(candidates) == 0 {
+			plan.Summary.NoAlternative++
+			if len(currentIssues) > 0 {
+				plan.Recommendations = append(plan.Recommendations, ChainFailoverRecommendation{
+					AgentID:                node.AgentID,
+					Name:                   node.Name,
+					SessionID:              node.SessionID,
+					HopDepth:               node.HopDepth,
+					CurrentParentAgentID:   currentParent.node.AgentID,
+					CurrentParentName:      currentParent.node.Name,
+					CurrentParentSessionID: node.ParentSessionID,
+					CurrentParentIssues:    currentIssues,
+					Reason:                 "current relay parent is at risk and no valid alternate relay parent is available",
+				})
+			}
+			return
+		}
+
+		recommended := candidates[0]
+		currentScore := failoverParentScore(currentParent.node)
+		if len(currentIssues) == 0 && recommended.Score <= currentScore {
+			return
+		}
+
+		reason := "alternate relay parent has lower failover cost"
+		if len(currentIssues) > 0 {
+			reason = "current relay parent is at risk"
+		}
+		recommendation := ChainFailoverRecommendation{
+			AgentID:                node.AgentID,
+			Name:                   node.Name,
+			SessionID:              node.SessionID,
+			HopDepth:               node.HopDepth,
+			CurrentParentAgentID:   currentParent.node.AgentID,
+			CurrentParentName:      currentParent.node.Name,
+			CurrentParentSessionID: node.ParentSessionID,
+			CurrentParentIssues:    currentIssues,
+			Reason:                 reason,
+			RecommendedParent:      &recommended,
+			Alternatives:           candidates,
+			CommandAvailable:       recommended.CommandAvailable,
+		}
+		if includeCommands && recommended.CommandAvailable {
+			recommendation.ConnectCommand = relayConnectCommand(recommended.ListenAddr, recommended.Fingerprint, recommended.authToken)
+		}
+		if recommendation.CommandAvailable {
+			plan.Summary.CommandReady++
+		}
+		plan.Recommendations = append(plan.Recommendations, recommendation)
+	})
+	plan.Summary.Recommendations = len(plan.Recommendations)
+	if plan.Summary.AtRisk > 0 || plan.Summary.Recommendations > 0 {
+		plan.Status = "warning"
+	}
+	return plan
+}
+
+func failoverAgentStates(snapshot proxy.ChainSnapshot) map[string]failoverAgentState {
+	nodesBySession := flattenChainNodes(snapshot.Agents)
+	states := make(map[string]failoverAgentState, len(nodesBySession))
+
+	AgentListMutex.Lock()
+	defer AgentListMutex.Unlock()
+	for _, agent := range AgentList {
+		node, ok := nodesBySession[agent.SessionID]
+		if !ok {
+			continue
+		}
+		states[agent.SessionID] = failoverAgentState{
+			node:      node,
+			relay:     agent.RelayStatusSnapshot(),
+			authToken: agent.RelayAuthToken,
+		}
+	}
+	return states
+}
+
+func failoverCandidatesFor(target proxy.ChainNode, states map[string]failoverAgentState) []ChainFailoverParent {
+	descendants := descendantSessionIDsFromNode(target)
+	candidates := make([]ChainFailoverParent, 0, len(states))
+	for _, state := range states {
+		node := state.node
+		if node.SessionID == target.SessionID || node.SessionID == target.ParentSessionID {
+			continue
+		}
+		if descendants[node.SessionID] {
+			continue
+		}
+		parent := failoverParentFromState(state)
+		if parent.BlockedReason != "" {
+			continue
+		}
+		if wouldExceedFailoverDepth(target, parent) {
+			continue
+		}
+		candidates = append(candidates, parent)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Score != candidates[j].Score {
+			return candidates[i].Score > candidates[j].Score
+		}
+		return candidates[i].AgentID < candidates[j].AgentID
+	})
+	return candidates
+}
+
+func failoverParentFromState(state failoverAgentState) ChainFailoverParent {
+	node := state.node
+	relay := state.relay
+	parent := ChainFailoverParent{
+		AgentID:          node.AgentID,
+		Name:             node.Name,
+		SessionID:        node.SessionID,
+		HopDepth:         node.HopDepth,
+		ListenAddr:       node.RelayListenAddr,
+		Fingerprint:      node.RelayCertFingerprint,
+		TokenExpiresAt:   node.RelayTokenExpiresAt,
+		TokenExpired:     node.RelayTokenExpired,
+		OneTimeToken:     node.RelayOneTimeToken,
+		OneTimeTokenUsed: relay.OneTimeTokenUsed,
+		PathRTTMS:        cloneInt64(node.PathRTTMS),
+		DownstreamCount:  node.DownstreamCount,
+		authToken:        state.authToken,
+		CommandAvailable: state.authToken != "" && node.RelayCertFingerprint != "" && node.RelayListenAddr != "" && !node.RelayTokenExpired && !relay.OneTimeTokenUsed,
+	}
+	parent.Score = failoverParentScore(node)
+	if !node.Alive {
+		parent.BlockedReason = "relay parent is offline"
+	} else if !node.RelayActive {
+		parent.BlockedReason = "relay is not active"
+	} else if node.RelayListenAddr == "" {
+		parent.BlockedReason = "relay listen address is missing"
+	} else if node.RelayCertFingerprint == "" {
+		parent.BlockedReason = "relay fingerprint is missing"
+	} else if node.RelayTokenExpired {
+		parent.BlockedReason = "relay token is expired"
+	} else if relay.OneTimeTokenUsed {
+		parent.BlockedReason = "relay one-time token is already used"
+	} else if state.authToken == "" {
+		parent.BlockedReason = "relay token is not available in proxy memory"
+	}
+	return parent
+}
+
+func failoverParentIssues(state failoverAgentState) []string {
+	node := state.node
+	var issues []string
+	if state.node.SessionID == "" {
+		return []string{"current parent is not registered"}
+	}
+	if !node.Alive {
+		issues = append(issues, "current parent is offline")
+	}
+	if !node.RelayActive {
+		issues = append(issues, "current parent relay is not active")
+	}
+	if node.RelayTokenExpired {
+		issues = append(issues, "current parent relay token is expired")
+	}
+	if state.relay.OneTimeTokenUsed {
+		issues = append(issues, "current parent relay one-time token is already used")
+	}
+	if node.RelayActive && node.RelayCertFingerprint == "" {
+		issues = append(issues, "current parent relay fingerprint is missing")
+	}
+	if node.RelayActive && state.authToken == "" {
+		issues = append(issues, "current parent relay token is not available in proxy memory")
+	}
+	return issues
+}
+
+func failoverParentScore(node proxy.ChainNode) int {
+	score := 0
+	if node.Alive {
+		score += 10000
+	}
+	if node.RelayActive {
+		score += 1000
+	}
+	if !node.RelayTokenExpired {
+		score += 500
+	}
+	score -= node.HopDepth * 1000
+	if node.PathRTTMS == nil {
+		score -= 250
+	} else {
+		score -= int(*node.PathRTTMS)
+	}
+	score -= node.DownstreamCount * 50
+	return score
+}
+
+func descendantSessionIDsFromNode(node proxy.ChainNode) map[string]bool {
+	descendants := make(map[string]bool)
+	walkChainNodes(node.Children, func(child proxy.ChainNode) {
+		descendants[child.SessionID] = true
+	})
+	return descendants
+}
+
+func wouldExceedFailoverDepth(target proxy.ChainNode, parent ChainFailoverParent) bool {
+	return parent.HopDepth+1+maxRelativeDescendantDepth(target) >= proxy.MaxChainDepth
+}
+
+func maxRelativeDescendantDepth(node proxy.ChainNode) int {
+	maxDepth := 0
+	var walk func(children []proxy.ChainNode, depth int)
+	walk = func(children []proxy.ChainNode, depth int) {
+		for _, child := range children {
+			if depth > maxDepth {
+				maxDepth = depth
+			}
+			walk(child.Children, depth+1)
+		}
+	}
+	walk(node.Children, 1)
+	return maxDepth
 }
 
 func chainRepairPlan(includeIPv6 bool, interfacePrefix string, start bool, pruneConflicts bool) ChainRepairPlan {

@@ -95,6 +95,16 @@ relayctl -api http://127.0.0.1:8080 -user ligolo -password "$LIGOLO_WEB_PASSWORD
 Add `--prune-conflicts` when you want lower-ranked duplicate route entries
 removed from config and active TUN interfaces.
 
+Review parent failover recommendations:
+
+```sh
+relayctl -api http://127.0.0.1:8080 -user ligolo -password "$LIGOLO_WEB_PASSWORD" \
+  chain-failover
+```
+
+Add `--include-commands` only for trusted operator output that may contain relay
+tokens for downstream reconnects.
+
 Apply selected routes and start missing tunnels:
 
 ```sh
@@ -111,5 +121,7 @@ relayctl -api http://127.0.0.1:8080 -user ligolo -password "$LIGOLO_WEB_PASSWORD
 
 `chain-plan` explains duplicate CIDR decisions before anything changes.
 `chain-repair` turns those decisions into safe route ensures, tunnel starts, and
-optional duplicate-route pruning. `ops --fail-on-warning` surfaces degraded mesh
-paths, expired relay tokens, route conflicts, and suggested repair actions.
+optional duplicate-route pruning. `chain-failover` identifies relayed agents
+that have a safer or lower-cost parent. `ops --fail-on-warning` surfaces
+degraded mesh paths, expired relay tokens, route conflicts, failover
+recommendations, and suggested repair actions.

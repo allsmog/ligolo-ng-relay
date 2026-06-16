@@ -627,4 +627,44 @@ func init() {
 			return nil
 		},
 	})
+
+	App.AddCommand(&grumble.Command{
+		Name:      "chain_failover",
+		Help:      "Show relay parent failover recommendations",
+		Usage:     "chain_failover [--include-commands]",
+		HelpGroup: "Relay",
+		Flags: func(f *grumble.Flags) {
+			f.BoolL("include-commands", false, "Include downstream reconnect commands with relay tokens")
+		},
+		Run: func(c *grumble.Context) error {
+			includeCommands := c.Flags.Bool("include-commands")
+			plan := chainFailoverPlan(includeCommands)
+			if len(plan.Recommendations) == 0 {
+				App.Println("No failover recommendations.")
+				return nil
+			}
+
+			t := table.NewWriter()
+			t.SetStyle(table.StyleLight)
+			t.SetTitle("Relay parent failover plan")
+			header := table.Row{"Agent ID", "Agent", "Current Parent", "Recommended Parent", "Command Ready", "Reason"}
+			if includeCommands {
+				header = append(header, "Connect Command")
+			}
+			t.AppendHeader(header)
+			for _, recommendation := range plan.Recommendations {
+				recommendedParent := "-"
+				if recommendation.RecommendedParent != nil {
+					recommendedParent = fmt.Sprintf("%d - %s", recommendation.RecommendedParent.AgentID, recommendation.RecommendedParent.Name)
+				}
+				row := table.Row{recommendation.AgentID, recommendation.Name, recommendation.CurrentParentName, recommendedParent, recommendation.CommandAvailable, recommendation.Reason}
+				if includeCommands {
+					row = append(row, recommendation.ConnectCommand)
+				}
+				t.AppendRow(row)
+			}
+			App.Println(t.Render())
+			return nil
+		},
+	})
 }

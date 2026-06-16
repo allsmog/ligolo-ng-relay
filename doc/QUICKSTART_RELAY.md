@@ -121,6 +121,15 @@ relayctl -api http://127.0.0.1:8080 -token "$TOKEN" \
 Add `--prune-conflicts` only when you want configured lower-ranked duplicate
 routes removed from their interfaces.
 
+Preview relay parent failover recommendations:
+
+```
+relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-failover
+```
+
+Add `--include-commands` only when the output should include downstream
+reconnect commands with relay tokens.
+
 Configure selected route/interface entries:
 
 ```
@@ -160,4 +169,4 @@ make relay-test
 
 The lab verifies `Proxy -> Agent A relay -> Agent B relay -> Agent C`, route
 automation, listener traffic through Agent C, idle traffic recovery, descendant
-cleanup, and `relayctl`.
+cleanup, failover recommendations, and `relayctl`.

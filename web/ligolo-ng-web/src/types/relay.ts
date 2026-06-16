@@ -10,6 +10,7 @@ export interface RelayOpsReport {
   route_plan: ChainRoutePlan;
   mesh_health?: RelayMeshHealth[];
   repair_plan: ChainRepairPlan;
+  failover_plan: ChainFailoverPlan;
 }
 
 export interface RelayOpsSummary {
@@ -30,6 +31,9 @@ export interface RelayOpsSummary {
   repair_actions: number;
   repair_automated: number;
   repair_manual: number;
+  failover_recommendations: number;
+  failover_at_risk: number;
+  failover_command_ready: number;
   warnings: number;
   max_depth: number;
 }
@@ -169,6 +173,55 @@ export interface ChainRepairAction {
   apply_supported: boolean;
   applied: boolean;
   error?: string;
+}
+
+export interface ChainFailoverPlan {
+  generated_at: string;
+  status: "ok" | "warning" | string;
+  summary: ChainFailoverPlanSummary;
+  recommendations?: ChainFailoverRecommendation[];
+}
+
+export interface ChainFailoverPlanSummary {
+  relayed_agents: number;
+  at_risk: number;
+  recommendations: number;
+  command_ready: number;
+  no_alternative: number;
+}
+
+export interface ChainFailoverRecommendation {
+  agent_id: number;
+  name: string;
+  session_id: string;
+  hop_depth: number;
+  current_parent_agent_id?: number;
+  current_parent_name?: string;
+  current_parent_session_id: string;
+  current_parent_issues?: string[];
+  reason: string;
+  recommended_parent?: ChainFailoverParent;
+  alternatives?: ChainFailoverParent[];
+  command_available: boolean;
+  connect_command?: string;
+}
+
+export interface ChainFailoverParent {
+  agent_id: number;
+  name: string;
+  session_id: string;
+  hop_depth: number;
+  listen_addr: string;
+  fingerprint?: string;
+  token_expires_at?: string;
+  token_expired: boolean;
+  one_time_token: boolean;
+  one_time_token_used: boolean;
+  path_rtt_ms?: number;
+  downstream_count: number;
+  score: number;
+  command_available: boolean;
+  blocked_reason?: string;
 }
 
 export interface RelayDoctorRelay {

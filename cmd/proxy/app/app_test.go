@@ -331,6 +331,68 @@ func TestChainRepairPlanBuildsSafeAndManualActions(t *testing.T) {
 	}
 }
 
+func TestChainFailoverPlanRecommendsBetterParent(t *testing.T) {
+	resetAppTestState(t)
+
+	expires := time.Now().Add(time.Hour)
+	AgentList[1] = &controller.LigoloAgent{
+		Name:                 "root@agent-a",
+		SessionID:            "agent-a",
+		Session:              testYamuxSession(t),
+		RelayActive:          true,
+		RelayListenAddr:      "0.0.0.0:11602",
+		RelayCertFingerprint: "FINGERPRINTA",
+		RelayAuthToken:       "token-a",
+		RelayTokenExpiresAt:  expires,
+	}
+	AgentList[2] = &controller.LigoloAgent{
+		Name:                 "root@agent-b",
+		SessionID:            "agent-b",
+		Session:              testYamuxSession(t),
+		RelayActive:          true,
+		RelayListenAddr:      "0.0.0.0:11603",
+		RelayCertFingerprint: "FINGERPRINTB",
+		RelayAuthToken:       "token-b",
+		RelayTokenExpiresAt:  expires,
+	}
+	AgentList[3] = &controller.LigoloAgent{
+		Name:      "root@agent-c",
+		SessionID: "agent-c",
+		Session:   testYamuxSession(t),
+	}
+	ChainMgr.AddLink("agent-b", "agent-c")
+	cachePathRTT("agent-a", 10)
+	cachePathRTT("agent-b", 50)
+	cachePathRTT("agent-c", 70)
+
+	plan := chainFailoverPlan(true)
+	if plan.Status != "warning" {
+		t.Fatalf("failover status = %q, want warning", plan.Status)
+	}
+	if plan.Summary.RelayedAgents != 1 {
+		t.Fatalf("relayed agents = %d, want 1", plan.Summary.RelayedAgents)
+	}
+	if plan.Summary.Recommendations != 1 {
+		t.Fatalf("recommendations = %d, want 1: %+v", plan.Summary.Recommendations, plan.Recommendations)
+	}
+	rec := plan.Recommendations[0]
+	if rec.SessionID != "agent-c" {
+		t.Fatalf("recommendation session = %q, want agent-c", rec.SessionID)
+	}
+	if rec.RecommendedParent == nil || rec.RecommendedParent.SessionID != "agent-a" {
+		t.Fatalf("recommended parent = %+v, want agent-a", rec.RecommendedParent)
+	}
+	if !rec.CommandAvailable {
+		t.Fatalf("command should be available: %+v", rec)
+	}
+	if !strings.Contains(rec.ConnectCommand, "-relay-token token-a") {
+		t.Fatalf("connect command missing token: %s", rec.ConnectCommand)
+	}
+	if !strings.Contains(rec.ConnectCommand, "-accept-fingerprint FINGERPRINTA") {
+		t.Fatalf("connect command missing fingerprint: %s", rec.ConnectCommand)
+	}
+}
+
 func resetAppTestState(t *testing.T) {
 	oldAgentList := AgentList
 	oldChainMgr := ChainMgr

@@ -73,6 +73,8 @@ func main() {
 		err = runChainPlan(c, args)
 	case "chain-repair":
 		err = runChainRepair(c, args)
+	case "chain-failover":
+		err = runChainFailover(c, args)
 	case "chain-autoroute":
 		err = runChainAutoroute(c, args)
 	case "relay-start":
@@ -100,6 +102,7 @@ func usage() {
   relayctl [global flags] chain-routes [--with-ipv6] [--interface-prefix ligolo]
   relayctl [global flags] chain-plan [--with-ipv6] [--interface-prefix ligolo] [--start]
   relayctl [global flags] chain-repair [--with-ipv6] [--interface-prefix ligolo] [--start] [--prune-conflicts] [--apply]
+  relayctl [global flags] chain-failover [--include-commands]
   relayctl [global flags] chain-autoroute [--with-ipv6] [--interface-prefix ligolo] [--start]
   relayctl [global flags] relay-start --agent id --listen 127.0.0.1:11602 [--relay-token token] [--token-ttl 8h] [--one-time-token]
   relayctl [global flags] relay-stop --agent id
@@ -215,6 +218,17 @@ func runChainRepair(c *client, args []string) error {
 	q.Set("start", fmt.Sprintf("%t", *start))
 	q.Set("prune_conflicts", fmt.Sprintf("%t", *pruneConflicts))
 	return c.print("GET", "/api/v1/chain_repair_plan?"+q.Encode(), nil)
+}
+
+func runChainFailover(c *client, args []string) error {
+	fs := flag.NewFlagSet("chain-failover", flag.ExitOnError)
+	includeCommands := fs.Bool("include-commands", false, "include downstream reconnect commands with relay tokens")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	q := url.Values{}
+	q.Set("include_commands", fmt.Sprintf("%t", *includeCommands))
+	return c.print("GET", "/api/v1/chain_failover_plan?"+q.Encode(), nil)
 }
 
 func runChainAutoroute(c *client, args []string) error {

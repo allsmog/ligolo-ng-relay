@@ -182,6 +182,9 @@ assert_chain_routes() {
 	repair="$(api_post chain_repair '{"InterfacePrefix":"relaytest","WithIPv6":false,"Start":false,"PruneConflicts":false}')"
 	echo "$repair" | jq -e '(.summary.applied >= 1) and ([.actions[] | select(.type == "ensure_route" and .applied == true)] | length >= 1)' >/dev/null
 
+	failover="$(api_get 'chain_failover_plan?include_commands=true')"
+	echo "$failover" | jq -e '(.summary.recommendations >= 1) and ([.recommendations[] | select(.session_id == "agent-c" and .recommended_parent.session_id == "agent-a" and .command_available == true and (.connect_command | contains("-relay-token")))] | length >= 1)' >/dev/null
+
 	autoroute="$(api_post chain_autoroute '{"InterfacePrefix":"relaytest","WithIPv6":false,"Start":false}')"
 	echo "$autoroute" | jq -e '.routes[] | select(.session_id == "agent-a" and .hop_depth == 0 and (.interface | startswith("relaytest")))' >/dev/null
 	echo "$autoroute" | jq -e '.plan.decisions[] | select(.session_id == "agent-c" and .decision == "skip_conflict")' >/dev/null

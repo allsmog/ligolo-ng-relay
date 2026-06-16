@@ -607,6 +607,15 @@ func StartLigoloApi() {
 			c.JSON(http.StatusOK, chainRepairPlan(withIPv6, interfacePrefix, start, pruneConflicts))
 		})
 
+		apiv1.GET("/chain_failover_plan", func(c *gin.Context) {
+			includeCommands, err := strconv.ParseBool(c.DefaultQuery("include_commands", "false"))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, inputError)
+				return
+			}
+			c.JSON(http.StatusOK, chainFailoverPlan(includeCommands))
+		})
+
 		apiv1.POST("/chain_autoroute", func(c *gin.Context) {
 			type ChainAutorouteRequest struct {
 				WithIPv6        bool

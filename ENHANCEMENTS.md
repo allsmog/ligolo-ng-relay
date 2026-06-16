@@ -74,6 +74,7 @@ full chain.
 | `chain_routes` | Display route candidates across direct and relayed agents |
 | `chain_plan` / `relayctl chain-plan` | Dry-run smart route decisions before writing config |
 | `chain_repair` / `relayctl chain-repair` | Dry-run or apply safe route repair actions |
+| `chain_failover` / `relayctl chain-failover` | Show safer or lower-cost relay parent recommendations |
 | `chain_autoroute` | Configure per-agent routes/interfaces across the chain |
 | `relayctl ops --fail-on-warning` | Print the relay operations report and fail when health is not `ok` |
 
@@ -92,14 +93,15 @@ full chain.
 | `GET /api/v1/chain_route_plan` | Dry-run smart route decisions with conflict resolution |
 | `GET /api/v1/chain_repair_plan` | Dry-run safe route repair and manual recovery actions |
 | `POST /api/v1/chain_repair` | Apply supported repair actions |
+| `GET /api/v1/chain_failover_plan` | Dry-run relay parent failover recommendations |
 | `POST /api/v1/chain_autoroute` | Configure selected per-agent routes/interfaces |
 
 ### Web UI
 
 The Web UI includes a **Relay** page that polls `/api/v1/relay/ops` and gives
 operators summary metrics, chain topology, mesh health, smart route-plan
-decisions, suggested actions, relay start, and relay token rotation or
-revocation controls.
+decisions, repair actions, failover recommendations, suggested actions, relay
+start, and relay token rotation or revocation controls.
 
 ### Notes & limits
 
@@ -126,6 +128,10 @@ revocation controls.
 - Repair planning converts route and mesh health into safe automatic actions
   such as missing-route ensures and tunnel starts, while leaving token rotation
   and offline reconnects as explicit manual actions.
+- Failover planning scores alternate relay parents by online state, relay
+  readiness, token state, hop depth, path RTT, and downstream fanout. Reconnect
+  commands are emitted only when explicitly requested with `--include-commands`
+  or `include_commands=true`.
 - Stopping a relay now closes downstream sessions registered through that relay
   and prunes their chain links.
 - Structured chain status reports online/offline state and cached proxy-to-agent
