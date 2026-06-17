@@ -35,7 +35,7 @@ jobs:
           cache-dependency-path: web/ligolo-ng-relay-web/package-lock.json
       -
         name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
       -
         name: Verify upstream ancestry
         run: |

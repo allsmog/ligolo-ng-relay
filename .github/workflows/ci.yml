@@ -63,7 +63,7 @@ jobs:
         with:
           go-version: '1.26.4'
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
       - name: GoReleaser check
         run: go run github.com/goreleaser/goreleaser/v2@v2.16.0 check --config .goreleaser.yaml
       - name: Helm template check
