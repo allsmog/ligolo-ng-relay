@@ -3,9 +3,10 @@
 Ligolo-ng Relay should be released like an operator-facing security tool, not
 an untracked patchset.
 
-Use Go 1.26.3 or newer for the release checklist. The module compatibility
+Use Go 1.26.4 or newer for the release checklist. The module compatibility
 baseline remains `go 1.25.0`, but the pinned GoReleaser CLI currently requires
-Go 1.26.3+ for `go run`.
+Go 1.26.3+ for `go run`, and older Go 1.26 patch releases may have
+standard-library `govulncheck` findings.
 
 ## Required Checks
 

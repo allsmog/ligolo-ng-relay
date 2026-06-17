@@ -16,7 +16,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.26.3'
+          go-version: '1.26.4'
       - name: Go vet
         run: go vet ./...
       - name: Go test
@@ -61,7 +61,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.26.3'
+          go-version: '1.26.4'
       - name: Set up Helm
         uses: azure/setup-helm@v4
       - name: GoReleaser check
