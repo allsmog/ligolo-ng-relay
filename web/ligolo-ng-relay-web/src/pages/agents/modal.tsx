@@ -187,7 +187,7 @@ export function AutorouteModal({
                 onPress={async () => {
                   await setupAutoroute().then(() => {
                     addToast({
-                      title: "Ligolo-ng",
+                      title: "Ligolo-ng Relay",
                       description:
                         "Autoroute: interface and routes configured!",
                       color: "success",
@@ -208,7 +208,7 @@ export function AutorouteModal({
                     });
 
                     addToast({
-                      title: "Ligolo-ng",
+                      title: "Ligolo-ng Relay",
                       description: "Autoroute: tunnel started!",
                       color: "success",
                     });

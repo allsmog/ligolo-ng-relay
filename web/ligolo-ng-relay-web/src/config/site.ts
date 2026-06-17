@@ -1,7 +1,7 @@
 export type SiteConfig = typeof siteConfig;
 
 export const siteConfig = {
-  name: "Ligolo-ng web",
+  name: "Ligolo-ng Relay web",
   description: "An advanced, yet simple, tunneling tool that uses TUN interfaces.",
   navItems: [
     {

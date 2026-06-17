@@ -16,6 +16,10 @@ operator-safe multi-hop relay chains. The exact fork delta is tracked in
 - `chain_routes` and `chain_autoroute` support route planning across relayed
   agents and flag duplicate CIDRs.
 - UDP scan acceleration via ICMP/ICMPv6 Port Unreachable responses.
+- API hardening for bearer-token auth, expiring admin sessions, login
+  rate-limiting, and HTTP server timeouts.
+- Hardened agent certificate fingerprint verification and current Go security
+  dependency baselines.
 - Release artifacts include proxy, agent, and `relayctl` binaries, archive
   SBOMs, checksums, a Sigstore checksum bundle, and GHCR images.
 
@@ -32,8 +36,19 @@ operator-safe multi-hop relay chains. The exact fork delta is tracked in
 Before publishing, attach or reference the output from:
 
 ```
+git fetch upstream master
+git merge-base --is-ancestor upstream/master HEAD
+npm ci --prefix web/ligolo-ng-relay-web
+npm run build --prefix web/ligolo-ng-relay-web
+npm audit --audit-level=moderate --prefix web/ligolo-ng-relay-web
+go vet ./...
 go test ./...
+go test -race ./...
 go build ./cmd/proxy ./cmd/agent ./cmd/relayctl
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -include=G123 -tests ./...
+go run github.com/goreleaser/goreleaser/v2@v2.16.0 check --config .goreleaser.yaml
+helm template ligolo deploy/helm/ligolo-ng-relay --set proxy.webPassword=ci-password >/dev/null
 make relay-test
 goreleaser release --snapshot --clean --skip=publish
 cosign verify-blob --bundle dist/checksums.txt.sigstore.json --key /tmp/ligolo-dryrun.pub dist/checksums.txt

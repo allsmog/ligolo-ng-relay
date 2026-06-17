@@ -1,8 +1,8 @@
 # Production Deployment
 
-Ligolo-ng Relay production hosts need the same core privileges as upstream
-Ligolo-ng proxy hosts: the proxy must create and manage TUN interfaces. Keep the
-API private or place it behind an authenticated reverse proxy.
+Ligolo-ng Relay production hosts need proxy privileges to create and manage TUN
+interfaces. Keep the API private or place it behind an authenticated reverse
+proxy.
 
 ## Docker Compose
 
@@ -22,11 +22,12 @@ docker compose -f deploy/docker-compose.yml run --rm relayctl
 The Compose file publishes:
 
 - `11601/tcp` for direct agent connections
-- `8080/tcp` for the API and Web UI
+- `127.0.0.1:8080/tcp` for the API and Web UI
 - `11602/tcp` for a relay listener when an agent is instructed to bind there
 
 The proxy service runs with `NET_ADMIN` and `/dev/net/tun` so tunnels can be
-created from inside the container.
+created from inside the container. Keep the loopback API binding unless you put
+the API behind an authenticated, TLS-terminating reverse proxy.
 
 ## systemd
 
@@ -64,10 +65,13 @@ helm install ligolo deploy/helm/ligolo-ng-relay \
   --set proxy.webPassword='change-me'
 ```
 
-The chart creates one proxy Deployment, a Service exposing proxy/API/relay ports,
-and an optional PVC for proxy config. By default it mounts `/dev/net/tun` from
-the node and runs privileged with `NET_ADMIN`. Adjust `service.type`, storage,
-node selectors, and security context for your cluster policy.
+The chart requires either `proxy.webPassword` or `proxy.existingSecret` so the
+API cannot be installed with the packaged demo credential. It creates one proxy
+Deployment, a Service exposing proxy/API/relay ports, and an optional PVC for
+proxy config. By default it mounts `/dev/net/tun` from the node and requests
+`NET_ADMIN` without privileged mode. If your cluster requires a different TUN
+model, set `securityContext.privileged` deliberately and document that exception
+in the deployment review.
 
 ## Route Planning And Smoke Gates
 

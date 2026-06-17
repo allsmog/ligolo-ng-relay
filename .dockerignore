@@ -2,9 +2,9 @@
 .idea
 dist
 ligolo-selfcerts
-ligolo-ng.history
-ligolo-ng.yaml
+ligolo-ng-relay.history
+ligolo-ng-relay.yaml
 web/dist/assets
 web/dist/ligolo.svg
-web/ligolo-ng-web/dist
-web/ligolo-ng-web/node_modules
+web/ligolo-ng-relay-web/dist
+web/ligolo-ng-relay-web/node_modules

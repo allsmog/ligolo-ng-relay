@@ -1,4 +1,4 @@
-// Ligolo-ng
+// Ligolo-ng Relay
 // Copyright (C) 2025 Nicolas Chatelain (nicocha30)
 
 // This program is free software: you can redistribute it and/or modify
@@ -70,7 +70,7 @@ func main() {
 
 	flag.Usage = func() {
 		fmt.Printf("Ligolo-ng Relay %s / %s / %s\n", version, commit, date)
-		fmt.Println("Maintained fork of Ligolo-ng by @Nicocha30")
+		fmt.Println("Maintained fork of upstream Ligolo-ng by @Nicocha30")
 		fmt.Println("https://github.com/allsmog/ligolo-ng-relay")
 		fmt.Printf("\nUsage of %s:\n", os.Args[0])
 		flag.PrintDefaults()
@@ -216,7 +216,7 @@ func main() {
 	}
 
 	if config.Config.GetBool("web.enabled") {
-		logrus.Infof("Starting Ligolo-ng Web, API URL is set to: %s", app.GetAPIUrl())
+		logrus.Infof("Starting Ligolo-ng Relay Web, API URL is set to: %s", app.GetAPIUrl())
 		go app.StartLigoloApi()
 	}
 	app.StartRelayAutoHealFromConfig()

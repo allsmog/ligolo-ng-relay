@@ -1,6 +1,6 @@
 # Restrictive Egress Runbook
 
-Ligolo-ng Relay inherits Ligolo-ng's carrier paths for environments where direct
+Ligolo-ng Relay inherits upstream Ligolo-ng's carrier paths for environments where direct
 outbound TCP is blocked. The fork keeps those paths compatible with relay mode: once
 Agent A is connected to the proxy, downstream Agent B can register through Agent
 A even when the proxy is unreachable from B.

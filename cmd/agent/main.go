@@ -1,4 +1,4 @@
-// Ligolo-ng
+// Ligolo-ng Relay
 // Copyright (C) 2025 Nicolas Chatelain (nicocha30)
 
 // This program is free software: you can redistribute it and/or modify
@@ -17,11 +17,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/hex"
 	"flag"
 	"fmt"
@@ -73,7 +72,7 @@ func main() {
 
 	flag.Usage = func() {
 		fmt.Printf("Ligolo-ng Relay %s / %s / %s\n", version, commit, date)
-		fmt.Println("Maintained fork of Ligolo-ng by @Nicocha30")
+		fmt.Println("Maintained fork of upstream Ligolo-ng by @Nicocha30")
 		fmt.Println("https://github.com/allsmog/ligolo-ng-relay")
 		fmt.Printf("\nUsage of %s:\n", os.Args[0])
 		flag.PrintDefaults()
@@ -192,29 +191,36 @@ func main() {
 			}
 			if err == nil {
 				if currentTarget.acceptFingerprint != "" {
-					tlsConfig.InsecureSkipVerify = true
-					tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-						crtFingerprint := sha256.Sum256(rawCerts[0])
-						crtMatch, decodeErr := hex.DecodeString(currentTarget.acceptFingerprint)
-						if decodeErr != nil {
-							return fmt.Errorf("invalid cert fingerprint: %v\n", decodeErr)
+					crtMatch, decodeErr := hex.DecodeString(currentTarget.acceptFingerprint)
+					if decodeErr != nil {
+						conn.Close()
+						err = fmt.Errorf("invalid cert fingerprint: %v", decodeErr)
+					} else {
+						tlsConfig.InsecureSkipVerify = true
+						tlsConfig.VerifyConnection = func(state tls.ConnectionState) error {
+							if len(state.PeerCertificates) == 0 {
+								return fmt.Errorf("server did not present a certificate")
+							}
+							crtFingerprint := sha256.Sum256(state.PeerCertificates[0].Raw)
+							if subtle.ConstantTimeCompare(crtMatch, crtFingerprint[:]) != 1 {
+								return fmt.Errorf("certificate does not match fingerprint: %X != %X", crtFingerprint, crtMatch)
+							}
+							return nil
 						}
-						if bytes.Compare(crtMatch, crtFingerprint[:]) != 0 {
-							return fmt.Errorf("certificate does not match fingerprint: %X != %X", crtFingerprint, crtMatch)
-						}
-						return nil
 					}
 				}
-				tlsConn := tls.Client(conn, &tlsConfig)
-				if currentTarget.relayToken != "" {
-					if authErr := agent.WriteRelayAuth(tlsConn, currentTarget.relayToken); authErr != nil {
-						conn.Close()
-						err = fmt.Errorf("relay auth failed: %v", authErr)
+				if err == nil {
+					tlsConn := tls.Client(conn, &tlsConfig)
+					if currentTarget.relayToken != "" {
+						if authErr := agent.WriteRelayAuth(tlsConn, currentTarget.relayToken); authErr != nil {
+							conn.Close()
+							err = fmt.Errorf("relay auth failed: %v", authErr)
+						} else {
+							connSuccess, err = connect(tlsConn)
+						}
 					} else {
 						connSuccess, err = connect(tlsConn)
 					}
-				} else {
-					connSuccess, err = connect(tlsConn)
 				}
 			}
 		}

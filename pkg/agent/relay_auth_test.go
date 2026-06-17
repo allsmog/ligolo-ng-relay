@@ -1,4 +1,4 @@
-// Ligolo-ng
+// Ligolo-ng Relay
 // Copyright (C) 2025 Nicolas Chatelain (nicocha30)
 
 package agent

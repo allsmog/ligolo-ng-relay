@@ -1,11 +1,11 @@
 # Ligolo-ng Relay Enhancements
 
 Ligolo-ng Relay is a maintained fork of
-[Ligolo-ng](https://github.com/nicocha30/ligolo-ng). It adds multi-hop agent
+[upstream Ligolo-ng](https://github.com/nicocha30/ligolo-ng). It adds multi-hop agent
 chaining (relay mode) and ICMP Port Unreachable responses on top of upstream
-Ligolo-ng. Core setup, tunneling, and listeners still follow upstream behavior,
+upstream Ligolo-ng. Core setup, tunneling, and listeners still follow upstream behavior,
 while this fork adds relay-focused automation and a Web UI operations dashboard.
-The [Ligolo-ng documentation](https://docs.ligolo.ng/) still applies for
+The [upstream Ligolo-ng documentation](https://docs.ligolo.ng/) still applies for
 upstream features.
 
 Operational docs:

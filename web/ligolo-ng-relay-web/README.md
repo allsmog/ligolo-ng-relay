@@ -1,6 +1,6 @@
-# Ligolo-ng WebUI
+# Ligolo-ng Relay WebUI
 
-Ligolo-ng WebUI is a web application providing an intuitive user interface for the **Ligolo-ng** tool, an advanced tunneling/pivoting solution using a TUN interface. This UI simplifies the management and control of tunnels established by Ligolo-ng.
+Ligolo-ng Relay WebUI is a web application providing an intuitive user interface for **Ligolo-ng Relay**, an advanced tunneling/pivoting solution using a TUN interface. This UI simplifies the management and control of tunnels established by Ligolo-ng Relay.
 
 ## Features
 
@@ -11,15 +11,15 @@ Ligolo-ng WebUI is a web application providing an intuitive user interface for t
 ## Prerequisites
 
 - **Node.js**: Ensure Node.js is installed on your machine.
-- **Ligolo-ng**: The Ligolo-ng tool must be operational on your system.
+- **Ligolo-ng Relay**: The Ligolo-ng Relay proxy must be operational on your system.
 
 ## Installation
 
 1. **Clone the repository**:
 
    ```bash
-   git clone https://github.com/your-username/ligolo-ng-webui.git
-   cd ligolo-ng-webui
+   git clone https://github.com/allsmog/ligolo-ng-relay.git
+   cd ligolo-ng-relay/web/ligolo-ng-relay-web
    ```
 
 2. **Install dependencies**:
@@ -62,4 +62,4 @@ This project is licensed under the [GPL-3.0](https://github.com/nicocha30/ligolo
 
 ---
 
-*Note: This project is a user interface for the Ligolo-ng tool. For more details on Ligolo-ng, please refer to the [main repository](https://github.com/nicocha30/ligolo-ng).*
+*Note: This project is a user interface for Ligolo-ng Relay. For upstream background, see the original [Ligolo-ng repository](https://github.com/nicocha30/ligolo-ng).*

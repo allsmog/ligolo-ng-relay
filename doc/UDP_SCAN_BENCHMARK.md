@@ -7,7 +7,7 @@ ports can be classified as `closed` instead of lingering as `open|filtered`.
 ## Suggested Lab
 
 Use a controlled target behind a Ligolo tunnel with one closed UDP port and one
-open UDP service. Run each scan against upstream Ligolo-ng and this fork.
+open UDP service. Run each scan against upstream Ligolo-ng and Ligolo-ng Relay.
 
 Example commands:
 

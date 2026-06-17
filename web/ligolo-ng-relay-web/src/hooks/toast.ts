@@ -8,7 +8,7 @@ type ApiResponse = Record<string, unknown> & {
 export function handleApiResponse(jsonData: ApiResponse): void {
   if (!jsonData.error && !jsonData.message) return;
   addToast({
-    title: "Ligolo-ng",
+    title: "Ligolo-ng Relay",
     description: jsonData.error || jsonData.message,
     color: jsonData.error ? "danger" : "success",
   });

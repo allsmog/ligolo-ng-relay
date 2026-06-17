@@ -1,4 +1,4 @@
-// Ligolo-ng
+// Ligolo-ng Relay
 // Copyright (C) 2025 Nicolas Chatelain (nicocha30)
 
 // This program is free software: you can redistribute it and/or modify
@@ -47,6 +47,53 @@ func TestEncodeDecode(t *testing.T) {
 		t.Fatal("invalid packet decoded")
 	}
 
+}
+
+func TestDecodeLegacyShamatonMapPacket(t *testing.T) {
+	legacy := []byte{
+		1, 132,
+		164, 78, 97, 109, 101, 165, 104, 101, 108, 108, 111,
+		170, 73, 110, 116, 101, 114, 102, 97, 99, 101, 115, 192,
+		169, 83, 101, 115, 115, 105, 111, 110, 73, 68, 160,
+		172, 82, 101, 108, 97, 121, 67, 97, 112, 97, 98, 108, 101, 194,
+	}
+
+	dec := NewDecoder(bytes.NewReader(legacy))
+	if err := dec.Decode(); err != nil {
+		t.Fatal(err)
+	}
+
+	reply := dec.Payload.(*InfoReplyPacket)
+	if reply.Name != "hello" || reply.RelayCapable || reply.SessionID != "" || reply.Interfaces != nil {
+		t.Fatalf("unexpected legacy packet decode: %+v", reply)
+	}
+}
+
+func TestDecodeDoesNotBufferRawStreamBytes(t *testing.T) {
+	var buffer bytes.Buffer
+	enc := NewEncoder(&buffer)
+	if err := enc.Encode(RelayBridgeRequestPacket{ConnectionID: 42}); err != nil {
+		t.Fatal(err)
+	}
+
+	rawStreamPrefix := []byte{0, 1, 2, 3, 4, 5}
+	if _, err := buffer.Write(rawStreamPrefix); err != nil {
+		t.Fatal(err)
+	}
+
+	dec := NewDecoder(&buffer)
+	if err := dec.Decode(); err != nil {
+		t.Fatal(err)
+	}
+	request := dec.Payload.(*RelayBridgeRequestPacket)
+	if request.ConnectionID != 42 {
+		t.Fatalf("unexpected bridge request: %+v", request)
+	}
+
+	remaining := buffer.Bytes()
+	if !bytes.Equal(remaining, rawStreamPrefix) {
+		t.Fatalf("raw stream prefix was buffered or altered: got %v want %v", remaining, rawStreamPrefix)
+	}
 }
 
 func TestRelayPackets(t *testing.T) {

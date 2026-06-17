@@ -75,9 +75,19 @@ Before publishing a release:
 
 1. Fetch upstream and confirm `upstream/master` is an ancestor of the release
    branch.
-2. Run `go test ./...`.
-3. Run `go build ./cmd/proxy ./cmd/agent`.
-4. Run `go build ./cmd/relayctl`.
-5. Run `make relay-test`.
-6. Run the UDP scan benchmark in `doc/UDP_SCAN_BENCHMARK.md` when changing
+2. Run the Web build and dependency audit:
+   `npm ci --prefix web/ligolo-ng-relay-web`,
+   `npm run build --prefix web/ligolo-ng-relay-web`, and
+   `npm audit --audit-level=moderate --prefix web/ligolo-ng-relay-web`.
+3. Run Go quality and vulnerability gates:
+   `go vet ./...`, `go test ./...`, `go test -race ./...`,
+   `go run golang.org/x/vuln/cmd/govulncheck@latest ./...`, and
+   `go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -include=G123 -tests ./...`.
+4. Run `go build ./cmd/proxy ./cmd/agent ./cmd/relayctl`.
+5. Validate release and deployment metadata:
+   `go run github.com/goreleaser/goreleaser/v2@v2.16.0 check --config .goreleaser.yaml`
+   and
+   `helm template ligolo deploy/helm/ligolo-ng-relay --set proxy.webPassword=ci-password >/dev/null`.
+6. Run `make relay-test`.
+7. Run the UDP scan benchmark in `doc/UDP_SCAN_BENCHMARK.md` when changing
    netstack or ICMP behavior.

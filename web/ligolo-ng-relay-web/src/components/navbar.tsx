@@ -32,7 +32,7 @@ export const Navbar = () => {
             href="/"
           >
             <Logo />
-            <p className="font-bold text-inherit">Ligolo-ng</p>
+            <p className="font-bold text-inherit">Ligolo-ng Relay</p>
           </Link>
         </NavbarBrand>
         <div className="hidden lg:flex gap-4 justify-start ml-2">
@@ -99,7 +99,7 @@ export const Navbar = () => {
             color={session ? "warning" : "danger"}
             variant="flat"
           >
-            {session ? "Connected to Ligolo-ng" : "Not connected"}
+            {session ? "Connected to Ligolo-ng Relay" : "Not connected"}
           </Button>
         </NavbarItem>
       </NavbarContent>

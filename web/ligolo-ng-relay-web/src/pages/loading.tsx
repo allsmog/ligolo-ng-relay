@@ -1,7 +1,6 @@
 import { ThemeSwitch } from "@/components/theme-switch.tsx";
 import { Card, Progress } from "@heroui/react";
 import { Logo } from "@/assets/icons/logo.tsx";
-import { Minus } from "lucide-react";
 
 export default function LoadingPage() {
   return (
@@ -13,9 +12,7 @@ export default function LoadingPage() {
         <div className="inline-flex  text-default-foreground items-center gap-1 justify-center mb-2 select-none">
           <Logo size={50} />
           <p className="font-bold font-[500] text-xl tracking-wider flex items-center gap-[1px] opacity-90">
-            Ligolo{" "}
-            <Minus size={10} strokeWidth={4} className="relative top-[3px]" />{" "}
-            ng
+            Ligolo-ng Relay
           </p>
         </div>
         <div className="mt-6">

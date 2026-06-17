@@ -47,7 +47,8 @@ lint: ## Lint the files
 	@env CGO_ENABLED=0 go vet ${GOFILESNOTEST}
 
 security:
-	@gosec -tests ./...
+	@go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	@go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -include=G123 -tests ./...
 
 relay-test:
 	@./test/relay/run.sh

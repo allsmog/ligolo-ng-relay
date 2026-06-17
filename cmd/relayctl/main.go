@@ -1,4 +1,4 @@
-// Ligolo-ng
+// Ligolo-ng Relay
 // Copyright (C) 2025 Nicolas Chatelain (nicocha30)
 
 package main
@@ -33,7 +33,7 @@ func main() {
 	token := envDefault("LIGOLO_TOKEN", "")
 
 	global := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	global.StringVar(&apiURL, "api", apiURL, "Ligolo API base URL")
+	global.StringVar(&apiURL, "api", apiURL, "Ligolo-ng Relay API base URL")
 	global.StringVar(&username, "user", username, "API username")
 	global.StringVar(&password, "password", password, "API password")
 	global.StringVar(&token, "token", token, "API bearer token")
@@ -117,7 +117,7 @@ Global flags:
 `)
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	fmt.Fprintln(os.Stderr, "  -api string")
-	fmt.Fprintln(os.Stderr, "        Ligolo API base URL (or LIGOLO_API)")
+	fmt.Fprintln(os.Stderr, "        Ligolo-ng Relay API base URL (or LIGOLO_API)")
 	fmt.Fprintln(os.Stderr, "  -user string")
 	fmt.Fprintln(os.Stderr, "        API username (or LIGOLO_USER)")
 	fmt.Fprintln(os.Stderr, "  -password string")

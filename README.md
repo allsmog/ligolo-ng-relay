@@ -8,7 +8,7 @@ An advanced, yet simple, tunneling tool that uses TUN interfaces — extended fo
 [![GPLv3](https://img.shields.io/badge/License-GPLv3-brightgreen.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 > **Ligolo-ng Relay is a maintained fork of
-> [Ligolo-ng](https://github.com/nicocha30/ligolo-ng).** It adds recursive relay
+> [upstream Ligolo-ng](https://github.com/nicocha30/ligolo-ng).** It adds recursive relay
 > chains, so an agent can act as a lightweight TLS relay for downstream agents
 > that cannot reach the proxy directly, plus ICMP Port Unreachable responses that
 > make UDP scans return instantly instead of timing out. See
@@ -17,19 +17,19 @@ An advanced, yet simple, tunneling tool that uses TUN interfaces — extended fo
 > relay path can be verified with `make relay-test`.
 >
 > Setup, quickstart, and core usage are unchanged from upstream — the upstream
-> [Ligolo-ng Documentation](https://docs.ligolo.ng/) still applies.
+> [upstream Ligolo-ng Documentation](https://docs.ligolo.ng/) still applies.
 
 > [!TIP]
-> Ligolo-ng 0.8 added a lot of new features, including:
+> Upstream Ligolo-ng 0.8 added a lot of new features, including:
 > - 🌐 API and a beautiful Web Interface thanks to [L'ami du Raisin](https://github.com/jeremiebedjai), allowing **multiplayer**!
 > - ⚙️ Simple configuration file, to keep your tunneling/proxy settings
-> - 🚦 **Daemon mode**, to run Ligolo-ng as a service
+> - 🚦 **Daemon mode**, to run upstream Ligolo-ng as a service
 > - 🔗 Auto-bind, to **automatically configure tunneling** whenever a specific agent connects
 > - 📶 Easy and automatic (autoroute) route and interface management on **Windows, Linux, MacOS and BSD**!
 > - 💀 Agent kill, to remotely terminate an agent
 >
 > Please try it out! 
-> [Release: Ligolo-ng 0.8](https://github.com/nicocha30/ligolo-ng/releases/tag/v0.8)
+> [Release: upstream Ligolo-ng 0.8](https://github.com/nicocha30/ligolo-ng/releases/tag/v0.8)
 > 
 > ![Ligolo Web](doc/webui.png)
 
@@ -54,7 +54,7 @@ An advanced, yet simple, tunneling tool that uses TUN interfaces — extended fo
 
 ## Introduction
 
-**Ligolo-ng Relay** keeps Ligolo-ng's simple, lightweight TUN-based tunneling
+**Ligolo-ng Relay** keeps upstream Ligolo-ng's simple, lightweight TUN-based tunneling
 model and adds recursive relay chains for multi-pivot operator workflows.
 
 ## Features
@@ -133,8 +133,8 @@ This allows running tools like *nmap* without the use of *proxychains* (simpler 
 
 ## How to use - documentation - tutorial
 
-Core setup and usage are inherited from Ligolo-ng and remain documented in the
-[Ligolo-ng Documentation](https://docs.ligolo.ng/). Fork-specific relay-chain
+Core setup and usage are inherited from upstream Ligolo-ng and remain documented in the
+[upstream Ligolo-ng Documentation](https://docs.ligolo.ng/). Fork-specific relay-chain
 usage lives in [ENHANCEMENTS.md](ENHANCEMENTS.md),
 [doc/QUICKSTART_RELAY.md](doc/QUICKSTART_RELAY.md), and
 [doc/RELAY_API.md](doc/RELAY_API.md).
@@ -192,7 +192,7 @@ When using *nmap*, you should use `--unprivileged` or `-PE` to avoid false posit
 ## Credits
 
 Ligolo-ng Relay is a maintained fork of
-[Ligolo-ng](https://github.com/nicocha30/ligolo-ng) by Nicolas Chatelain. All
+[upstream Ligolo-ng](https://github.com/nicocha30/ligolo-ng) by Nicolas Chatelain. All
 credit for the original tool goes to the upstream authors:
 
 - Nicolas Chatelain <nicolas -at- chatelain.me>

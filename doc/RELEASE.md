@@ -8,14 +8,24 @@ an untracked patchset.
 ```
 git fetch upstream master
 git merge-base --is-ancestor upstream/master HEAD
-npm ci --prefix web/ligolo-ng-web
-npm run build --prefix web/ligolo-ng-web
-npm audit --audit-level=high --prefix web/ligolo-ng-web
+npm ci --prefix web/ligolo-ng-relay-web
+npm run build --prefix web/ligolo-ng-relay-web
+npm audit --audit-level=moderate --prefix web/ligolo-ng-relay-web
+go vet ./...
 go test ./...
+go test -race ./...
 go build ./cmd/proxy ./cmd/agent
 go build ./cmd/relayctl
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -include=G123 -tests ./...
+go run github.com/goreleaser/goreleaser/v2@v2.16.0 check --config .goreleaser.yaml
+helm template ligolo deploy/helm/ligolo-ng-relay --set proxy.webPassword=ci-password >/dev/null
 make relay-test
 ```
+
+`gosec` is scoped to `G123` in the mandatory gate because TLS fingerprint
+pinning is part of the supported agent trust model. Expand the scan profile only
+after triaging findings into tracked issues or accepted-risk entries.
 
 For local GoReleaser dry-runs outside GitHub Actions, use snapshot mode and a
 temporary cosign key so the checksum signing step does not wait for browser/OIDC

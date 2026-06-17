@@ -1,6 +1,5 @@
 import * as React from "react";
 import { useCallback, useContext, useState } from "react";
-import { Minus } from "lucide-react";
 import { Logo } from "@/assets/icons/logo.tsx";
 import { ThemeSwitch } from "@/components/theme-switch.tsx";
 import { AuthContext } from "@/contexts/Auth.tsx";
@@ -61,9 +60,7 @@ export default function LoginPage() {
         <div className="inline-flex  text-default-foreground items-center gap-1 justify-center mb-2 select-none">
           <Logo size={50} />
           <p className="font-bold font-[500] text-xl tracking-wider flex items-center gap-[1px] opacity-90 hover:opacity-100 cursor-pointer">
-            Ligolo{" "}
-            <Minus size={10} strokeWidth={4} className="relative top-[3px]" />{" "}
-            ng
+            Ligolo-ng Relay
           </p>
         </div>
         <div className="w-[600px] mx-auto my-4 flex items-center justify-center px-2">

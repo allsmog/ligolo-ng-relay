@@ -1,6 +1,6 @@
 image:
   repository: ghcr.io/allsmog/ligolo-ng-relay-proxy
-  tag: 0.8.3-relay.3
+  tag: 0.8.3-relay.5
   pullPolicy: IfNotPresent
 
 proxy:
@@ -8,7 +8,7 @@ proxy:
   apiListen: 0.0.0.0:8080
   selfcert: true
   webUser: ligolo
-  webPassword: change-me
+  webPassword: ""
   existingSecret: ""
 
 service:
@@ -19,7 +19,7 @@ service:
     relay: 11602
 
 securityContext:
-  privileged: true
+  privileged: false
   capabilities:
     add:
       - NET_ADMIN

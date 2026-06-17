@@ -17,10 +17,10 @@ export default function DefaultLayout({
         <Link
           isExternal
           className="flex items-center gap-1 text-current"
-          href="https://github.com/nicocha30/ligolo-ng"
-          title="Ligolo-ng homepage"
+          href="https://github.com/allsmog/ligolo-ng-relay"
+          title="Ligolo-ng Relay homepage"
         >
-          <span className="text-default-600">Ligolo-ng WebUI -</span>
+          <span className="text-default-600">Ligolo-ng Relay WebUI -</span>
           <p className="text-primary">Nicocha30 & L&#39;Ami du Raisin</p>
         </Link>
       </footer>
