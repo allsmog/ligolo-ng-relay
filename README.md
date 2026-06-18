@@ -76,6 +76,8 @@ model and adds recursive relay chains for multi-pivot operator workflows.
   conflicts, token state, and automation gates
 - **Smart relay automation** for route planning, safe repair actions, parent
   failover, and opt-in bounded auto-heal reconciliation
+- **MCP server (`relaymcp`)** exposing the relay control plane to AI agents such
+  as Claude over stdio or streamable HTTP (see [doc/MCP.md](doc/MCP.md))
 - **ICMP Port Unreachable** responses for fast UDP port scanning
 
 ## Fork verification
@@ -88,6 +90,8 @@ model and adds recursive relay chains for multi-pivot operator workflows.
   doctor`, token rotation, and revocation.
 - [doc/RELAY_API.md](doc/RELAY_API.md) documents scriptable relay control and
   structured chain status, including the `relayctl` helper.
+- [doc/MCP.md](doc/MCP.md) documents the `relaymcp` MCP server that lets an AI
+  agent (e.g. Claude) drive the same relay control plane through MCP tools.
 - `chain_routes`, `chain_plan`, `chain_repair`, `chain_failover`,
   `chain_autoroute`, `relayctl chain-plan`, `relayctl chain-repair`,
   `relayctl chain-failover`, `relayctl autoheal`, and
@@ -136,8 +140,30 @@ This allows running tools like *nmap* without the use of *proxychains* (simpler 
 Core setup and usage are inherited from upstream Ligolo-ng and remain documented in the
 [upstream Ligolo-ng Documentation](https://docs.ligolo.ng/). Fork-specific relay-chain
 usage lives in [ENHANCEMENTS.md](ENHANCEMENTS.md),
-[doc/QUICKSTART_RELAY.md](doc/QUICKSTART_RELAY.md), and
-[doc/RELAY_API.md](doc/RELAY_API.md).
+[doc/QUICKSTART_RELAY.md](doc/QUICKSTART_RELAY.md),
+[doc/RELAY_API.md](doc/RELAY_API.md), and [doc/MCP.md](doc/MCP.md).
+
+## AI agent control (MCP)
+
+Ligolo-ng Relay can be driven by an AI agent (such as Claude) through the
+[Model Context Protocol](https://modelcontextprotocol.io). Run it as the standalone
+`relaymcp` bridge against the API, or embed it directly in the proxy:
+
+```shell
+# standalone bridge (talks to the proxy REST API)
+LIGOLO_API=http://127.0.0.1:8080 LIGOLO_USER=relay LIGOLO_PASSWORD=… relaymcp
+
+# embedded in the proxy, over stdio (no API server needed)
+proxy -mcp -selfcert -laddr 0.0.0.0:11601
+
+# embedded, over streamable HTTP at /mcp (behind the API's JWT auth)
+proxy -api -mcp-api -web-user relay -web-password …
+```
+
+Tools cover agents, relay chains, diagnostics, route planning, repair, parent
+failover, auto-heal, tunnels, listeners, interfaces, and routes, with MCP destructive
+hints so the client confirms disruptive actions (or run read-only). See
+[doc/MCP.md](doc/MCP.md) for the tool catalog and client configuration.
 
 ## Does it require Administrator/root access ?
 

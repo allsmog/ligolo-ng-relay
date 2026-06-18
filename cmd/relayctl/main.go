@@ -5,26 +5,19 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
-)
 
-type client struct {
-	baseURL    string
-	username   string
-	password   string
-	token      string
-	httpClient *http.Client
-}
+	"github.com/allsmog/ligolo-ng-relay/pkg/relayapi"
+)
 
 func main() {
 	apiURL := envDefault("LIGOLO_API", "http://127.0.0.1:8080")
@@ -46,24 +39,21 @@ func main() {
 		os.Exit(2)
 	}
 
-	c := &client{
-		baseURL:  strings.TrimRight(apiURL, "/"),
-		username: username,
-		password: password,
-		token:    token,
-		httpClient: &http.Client{
-			Timeout: 15 * time.Second,
-		},
-	}
+	c := relayapi.New(relayapi.Config{
+		BaseURL:  apiURL,
+		Username: username,
+		Password: password,
+		Token:    token,
+	})
 
 	cmd := global.Arg(0)
 	args := global.Args()[1:]
 	var err error
 	switch cmd {
 	case "agents":
-		err = c.print("GET", "/api/v1/agents", nil)
+		err = printResult(c, "GET", "/api/v1/agents", nil)
 	case "chains":
-		err = c.print("GET", "/api/v1/chains", nil)
+		err = printResult(c, "GET", "/api/v1/chains", nil)
 	case "doctor":
 		err = runDoctor(c, args)
 	case "ops":
@@ -126,7 +116,7 @@ Global flags:
 	fmt.Fprintln(os.Stderr, "        API bearer token (or LIGOLO_TOKEN)")
 }
 
-func runDoctor(c *client, args []string) error {
+func runDoctor(c *relayapi.Client, args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
 	withIPv6 := fs.Bool("with-ipv6", false, "include IPv6 route candidates")
 	interfacePrefix := fs.String("interface-prefix", "ligolo", "interface prefix")
@@ -136,10 +126,10 @@ func runDoctor(c *client, args []string) error {
 	q := url.Values{}
 	q.Set("with_ipv6", fmt.Sprintf("%t", *withIPv6))
 	q.Set("interface_prefix", *interfacePrefix)
-	return c.print("GET", "/api/v1/relay/doctor?"+q.Encode(), nil)
+	return printResult(c, "GET", "/api/v1/relay/doctor?"+q.Encode(), nil)
 }
 
-func runOps(c *client, args []string) error {
+func runOps(c *relayapi.Client, args []string) error {
 	fs := flag.NewFlagSet("ops", flag.ExitOnError)
 	withIPv6 := fs.Bool("with-ipv6", false, "include IPv6 route candidates")
 	interfacePrefix := fs.String("interface-prefix", "ligolo", "interface prefix")
@@ -150,7 +140,7 @@ func runOps(c *client, args []string) error {
 	q := url.Values{}
 	q.Set("with_ipv6", fmt.Sprintf("%t", *withIPv6))
 	q.Set("interface_prefix", *interfacePrefix)
-	payload, err := c.do("GET", "/api/v1/relay/ops?"+q.Encode(), nil)
+	payload, err := c.Do(context.Background(), "GET", "/api/v1/relay/ops?"+q.Encode(), nil)
 	if err != nil {
 		return err
 	}
@@ -170,7 +160,7 @@ func runOps(c *client, args []string) error {
 	return nil
 }
 
-func runChainRoutes(c *client, args []string) error {
+func runChainRoutes(c *relayapi.Client, args []string) error {
 	fs := flag.NewFlagSet("chain-routes", flag.ExitOnError)
 	withIPv6 := fs.Bool("with-ipv6", false, "include IPv6 route candidates")
 	interfacePrefix := fs.String("interface-prefix", "ligolo", "interface prefix")
@@ -180,10 +170,10 @@ func runChainRoutes(c *client, args []string) error {
 	q := url.Values{}
 	q.Set("with_ipv6", fmt.Sprintf("%t", *withIPv6))
 	q.Set("interface_prefix", *interfacePrefix)
-	return c.print("GET", "/api/v1/chain_routes?"+q.Encode(), nil)
+	return printResult(c, "GET", "/api/v1/chain_routes?"+q.Encode(), nil)
 }
 
-func runChainPlan(c *client, args []string) error {
+func runChainPlan(c *relayapi.Client, args []string) error {
 	fs := flag.NewFlagSet("chain-plan", flag.ExitOnError)
 	withIPv6 := fs.Bool("with-ipv6", false, "include IPv6 route candidates")
 	interfacePrefix := fs.String("interface-prefix", "ligolo", "interface prefix")
@@ -195,10 +185,10 @@ func runChainPlan(c *client, args []string) error {
 	q.Set("with_ipv6", fmt.Sprintf("%t", *withIPv6))
 	q.Set("interface_prefix", *interfacePrefix)
 	q.Set("start", fmt.Sprintf("%t", *start))
-	return c.print("GET", "/api/v1/chain_route_plan?"+q.Encode(), nil)
+	return printResult(c, "GET", "/api/v1/chain_route_plan?"+q.Encode(), nil)
 }
 
-func runChainRepair(c *client, args []string) error {
+func runChainRepair(c *relayapi.Client, args []string) error {
 	fs := flag.NewFlagSet("chain-repair", flag.ExitOnError)
 	withIPv6 := fs.Bool("with-ipv6", false, "include IPv6 route candidates")
 	interfacePrefix := fs.String("interface-prefix", "ligolo", "interface prefix")
@@ -209,7 +199,7 @@ func runChainRepair(c *client, args []string) error {
 		return err
 	}
 	if *apply {
-		return c.print("POST", "/api/v1/chain_repair", map[string]any{
+		return printResult(c, "POST", "/api/v1/chain_repair", map[string]any{
 			"WithIPv6":        *withIPv6,
 			"InterfacePrefix": *interfacePrefix,
 			"Start":           *start,
@@ -221,10 +211,10 @@ func runChainRepair(c *client, args []string) error {
 	q.Set("interface_prefix", *interfacePrefix)
 	q.Set("start", fmt.Sprintf("%t", *start))
 	q.Set("prune_conflicts", fmt.Sprintf("%t", *pruneConflicts))
-	return c.print("GET", "/api/v1/chain_repair_plan?"+q.Encode(), nil)
+	return printResult(c, "GET", "/api/v1/chain_repair_plan?"+q.Encode(), nil)
 }
 
-func runChainFailover(c *client, args []string) error {
+func runChainFailover(c *relayapi.Client, args []string) error {
 	fs := flag.NewFlagSet("chain-failover", flag.ExitOnError)
 	includeCommands := fs.Bool("include-commands", false, "include downstream reconnect commands with relay tokens")
 	apply := fs.Bool("apply", false, "apply selected failover recommendations")
@@ -243,7 +233,7 @@ func runChainFailover(c *client, args []string) error {
 		if !*all && len(sessionIDs) == 0 && len(agentIDs) == 0 {
 			return errors.New("chain-failover --apply requires --all, --sessions, or --agents")
 		}
-		return c.print("POST", "/api/v1/chain_failover", map[string]any{
+		return printResult(c, "POST", "/api/v1/chain_failover", map[string]any{
 			"IncludeCommands": *includeCommands,
 			"All":             *all,
 			"SessionIDs":      sessionIDs,
@@ -252,7 +242,7 @@ func runChainFailover(c *client, args []string) error {
 	}
 	q := url.Values{}
 	q.Set("include_commands", fmt.Sprintf("%t", *includeCommands))
-	return c.print("GET", "/api/v1/chain_failover_plan?"+q.Encode(), nil)
+	return printResult(c, "GET", "/api/v1/chain_failover_plan?"+q.Encode(), nil)
 }
 
 func parseCSVStrings(value string) []string {
@@ -278,7 +268,7 @@ func parseCSVInts(value string) ([]int, error) {
 	return values, nil
 }
 
-func runAutoHeal(c *client, args []string) error {
+func runAutoHeal(c *relayapi.Client, args []string) error {
 	fs := flag.NewFlagSet("autoheal", flag.ExitOnError)
 	run := fs.Bool("run", false, "run one relay auto-heal reconciliation")
 	apply := fs.Bool("apply", false, "apply supported repair and failover actions")
@@ -294,9 +284,9 @@ func runAutoHeal(c *client, args []string) error {
 		return err
 	}
 	if !*run {
-		return c.print("GET", "/api/v1/relay/autoheal", nil)
+		return printResult(c, "GET", "/api/v1/relay/autoheal", nil)
 	}
-	return c.print("POST", "/api/v1/relay/autoheal/run", map[string]any{
+	return printResult(c, "POST", "/api/v1/relay/autoheal/run", map[string]any{
 		"Apply":            *apply,
 		"WithIPv6":         *withIPv6,
 		"InterfacePrefix":  *interfacePrefix,
@@ -309,7 +299,7 @@ func runAutoHeal(c *client, args []string) error {
 	})
 }
 
-func runChainAutoroute(c *client, args []string) error {
+func runChainAutoroute(c *relayapi.Client, args []string) error {
 	fs := flag.NewFlagSet("chain-autoroute", flag.ExitOnError)
 	withIPv6 := fs.Bool("with-ipv6", false, "include IPv6 route candidates")
 	interfacePrefix := fs.String("interface-prefix", "ligolo", "interface prefix")
@@ -317,14 +307,14 @@ func runChainAutoroute(c *client, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	return c.print("POST", "/api/v1/chain_autoroute", map[string]any{
+	return printResult(c, "POST", "/api/v1/chain_autoroute", map[string]any{
 		"WithIPv6":        *withIPv6,
 		"InterfacePrefix": *interfacePrefix,
 		"Start":           *start,
 	})
 }
 
-func runRelayStart(c *client, args []string) error {
+func runRelayStart(c *relayapi.Client, args []string) error {
 	fs := flag.NewFlagSet("relay-start", flag.ExitOnError)
 	agentID := fs.Int("agent", 0, "agent ID")
 	listenAddr := fs.String("listen", "127.0.0.1:11602", "relay listen address")
@@ -341,7 +331,7 @@ func runRelayStart(c *client, args []string) error {
 	if err != nil {
 		return err
 	}
-	return c.print("POST", fmt.Sprintf("/api/v1/relay/%d", *agentID), map[string]any{
+	return printResult(c, "POST", fmt.Sprintf("/api/v1/relay/%d", *agentID), map[string]any{
 		"ListenAddr":      *listenAddr,
 		"AuthToken":       *relayToken,
 		"TokenTTLSeconds": tokenTTLSeconds,
@@ -349,7 +339,7 @@ func runRelayStart(c *client, args []string) error {
 	})
 }
 
-func runRelayStop(c *client, args []string) error {
+func runRelayStop(c *relayapi.Client, args []string) error {
 	fs := flag.NewFlagSet("relay-stop", flag.ExitOnError)
 	agentID := fs.Int("agent", 0, "agent ID")
 	if err := fs.Parse(args); err != nil {
@@ -358,10 +348,10 @@ func runRelayStop(c *client, args []string) error {
 	if *agentID <= 0 {
 		return errors.New("relay-stop requires --agent")
 	}
-	return c.print("DELETE", fmt.Sprintf("/api/v1/relay/%d", *agentID), nil)
+	return printResult(c, "DELETE", fmt.Sprintf("/api/v1/relay/%d", *agentID), nil)
 }
 
-func runRelayTokenRotate(c *client, args []string) error {
+func runRelayTokenRotate(c *relayapi.Client, args []string) error {
 	fs := flag.NewFlagSet("relay-token-rotate", flag.ExitOnError)
 	agentID := fs.Int("agent", 0, "agent ID")
 	relayToken := fs.String("relay-token", os.Getenv("LIGOLO_RELAY_TOKEN"), "new relay auth token (or LIGOLO_RELAY_TOKEN); generated when empty")
@@ -377,14 +367,14 @@ func runRelayTokenRotate(c *client, args []string) error {
 	if err != nil {
 		return err
 	}
-	return c.print("POST", fmt.Sprintf("/api/v1/relay/%d/token", *agentID), map[string]any{
+	return printResult(c, "POST", fmt.Sprintf("/api/v1/relay/%d/token", *agentID), map[string]any{
 		"AuthToken":       *relayToken,
 		"TokenTTLSeconds": tokenTTLSeconds,
 		"OneTimeToken":    *oneTimeToken,
 	})
 }
 
-func runRelayTokenRevoke(c *client, args []string) error {
+func runRelayTokenRevoke(c *relayapi.Client, args []string) error {
 	fs := flag.NewFlagSet("relay-token-revoke", flag.ExitOnError)
 	agentID := fs.Int("agent", 0, "agent ID")
 	if err := fs.Parse(args); err != nil {
@@ -393,7 +383,7 @@ func runRelayTokenRevoke(c *client, args []string) error {
 	if *agentID <= 0 {
 		return errors.New("relay-token-revoke requires --agent")
 	}
-	return c.print("DELETE", fmt.Sprintf("/api/v1/relay/%d/token", *agentID), nil)
+	return printResult(c, "DELETE", fmt.Sprintf("/api/v1/relay/%d/token", *agentID), nil)
 }
 
 func parseTokenTTLSeconds(value string) (int64, error) {
@@ -404,8 +394,8 @@ func parseTokenTTLSeconds(value string) (int64, error) {
 	return int64(duration.Seconds()), nil
 }
 
-func (c *client) print(method, path string, body any) error {
-	payload, err := c.do(method, path, body)
+func printResult(c *relayapi.Client, method, path string, body any) error {
+	payload, err := c.Do(context.Background(), method, path, body)
 	if err != nil {
 		return err
 	}
@@ -420,80 +410,6 @@ func printPayload(payload []byte) {
 		return
 	}
 	fmt.Println(pretty.String())
-}
-
-func (c *client) do(method, path string, body any) ([]byte, error) {
-	if c.token == "" {
-		if err := c.auth(); err != nil {
-			return nil, err
-		}
-	}
-
-	var reader io.Reader
-	if body != nil {
-		payload, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		reader = bytes.NewReader(payload)
-	}
-	req, err := http.NewRequest(method, c.baseURL+path, reader)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", c.token)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	payload, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("%s %s failed: HTTP %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(payload)))
-	}
-	return payload, nil
-}
-
-func (c *client) auth() error {
-	if c.username == "" || c.password == "" {
-		return errors.New("set -token, or set -user and -password")
-	}
-	payload, err := json.Marshal(map[string]string{
-		"Username": c.username,
-		"Password": c.password,
-	})
-	if err != nil {
-		return err
-	}
-	resp, err := c.httpClient.Post(c.baseURL+"/api/auth", "application/json", bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("auth failed: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
-	}
-	var authResp struct {
-		Token string `json:"token"`
-	}
-	if err := json.Unmarshal(data, &authResp); err != nil {
-		return err
-	}
-	if authResp.Token == "" {
-		return errors.New("auth response did not include token")
-	}
-	c.token = authResp.Token
-	return nil
 }
 
 func envDefault(key, fallback string) string {

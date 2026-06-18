@@ -8,6 +8,9 @@ operator-safe multi-hop relay chains. The exact fork delta is tracked in
 
 - Multi-hop relay mode for `Proxy -> Agent A relay -> Agent B` and deeper chains.
 - `relayctl` for scriptable API workflows.
+- MCP server exposing the relay control plane to AI agents such as Claude over
+  stdio or streamable HTTP — as the standalone `relaymcp` bridge or embedded in
+  the proxy (`proxy -mcp` / `-mcp-api`); see [MCP.md](MCP.md).
 - `relay_doctor` and `relayctl doctor` for chain health, relay token state,
   recent relay events, and duplicate route warnings.
 - Relay auth tokens now expire by default, can be one-time, and can be rotated
@@ -20,13 +23,14 @@ operator-safe multi-hop relay chains. The exact fork delta is tracked in
   rate-limiting, and HTTP server timeouts.
 - Hardened agent certificate fingerprint verification and current Go security
   dependency baselines.
-- Release artifacts include proxy, agent, and `relayctl` binaries, archive
-  SBOMs, checksums, a Sigstore checksum bundle, and GHCR images.
+- Release artifacts include proxy, agent, `relayctl`, and `relaymcp` binaries,
+  archive SBOMs, checksums, a Sigstore checksum bundle, and GHCR images.
 
 ## Operator Docs
 
 - [Relay Quickstart](QUICKSTART_RELAY.md)
 - [Relay API and Automation](RELAY_API.md)
+- [MCP Server](MCP.md)
 - [Restrictive Egress Runbook](RESTRICTIVE_EGRESS.md)
 - [Relay Performance Checks](PERFORMANCE.md)
 - [UDP Scan Benchmark](UDP_SCAN_BENCHMARK.md)
@@ -44,7 +48,7 @@ npm audit --audit-level=moderate --prefix web/ligolo-ng-relay-web
 go vet ./...
 go test ./...
 go test -race ./...
-go build ./cmd/proxy ./cmd/agent ./cmd/relayctl
+go build ./cmd/proxy ./cmd/agent ./cmd/relayctl ./cmd/relaymcp
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -include=G123 -tests ./...
 go run github.com/goreleaser/goreleaser/v2@v2.16.0 check --config .goreleaser.yaml

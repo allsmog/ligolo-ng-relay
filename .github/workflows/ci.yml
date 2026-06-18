@@ -24,7 +24,7 @@ jobs:
       - name: Go race test
         run: go test -race ./...
       - name: Build commands
-        run: go build ./cmd/proxy ./cmd/agent ./cmd/relayctl
+        run: go build ./cmd/proxy ./cmd/agent ./cmd/relayctl ./cmd/relaymcp
       - name: Govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       - name: Gosec TLS pinning check

@@ -826,6 +826,16 @@ func StartLigoloApi() {
 		})
 	}
 
+	// Optionally serve the MCP control plane over streamable HTTP at /mcp,
+	// behind the same JWT auth as /api/v1. Enabled with `-mcp-api`.
+	if config.Config.GetBool("web.mcp") {
+		mcpHandler := gin.WrapH(NewMCPHTTPHandler(config.Config.GetBool("web.mcpreadonly")))
+		mcpGroup := r.Group("/mcp", authMiddleware())
+		mcpGroup.Any("", mcpHandler)
+		mcpGroup.Any("/*any", mcpHandler)
+		logrus.Warn("MCP server mounted at /mcp (streamable HTTP, JWT-authenticated).")
+	}
+
 	if config.Config.GetBool("web.tls.enabled") {
 		// create tls config
 		tlsConfig, err := tlsutils.CertManager(&tlsutils.CertManagerConfig{

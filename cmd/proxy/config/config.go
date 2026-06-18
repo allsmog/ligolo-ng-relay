@@ -233,12 +233,14 @@ func InitConfig(configFile string, nonInteractive ...bool) {
 		}
 		Config.SetDefault("web.enabled", enableWebUI)
 		Config.SetDefault("web.enableui", enableWebUI)
+		// Always default to a safe loopback CORS origin so the API can start
+		// even when the WebUI is disabled (e.g. `-api -no-web-ui`): gin-contrib/cors
+		// panics if AllowOrigins is empty while credentials are enabled.
+		Config.SetDefault("web.corsAllowedOrigin", []string{"http://127.0.0.1:8080"})
 
 		if enableWebUI {
 			if !noPrompt && ask("Allow CORS Access from https://webui.ligolo.ng?") {
 				Config.SetDefault("web.corsAllowedOrigin", []string{"https://webui.ligolo.ng"})
-			} else {
-				Config.SetDefault("web.corsAllowedOrigin", []string{"http://127.0.0.1:8080"})
 			}
 			logrus.Warn("WebUI enabled, default username and login are ligolo:password - make sure to update ligolo-ng-relay.yaml to change credentials!")
 		}

@@ -59,6 +59,17 @@ The proxy now supports noninteractive API startup and config overrides:
 - `-web-password` / `-api-password`
 - absolute or path-qualified `-config` files
 
+The fork also ships an MCP server exposing the relay control plane to AI agents
+such as Claude over stdio or streamable HTTP, in two forms sharing the
+`pkg/relaymcp` tool layer (behind a `RelayBackend` interface):
+
+- standalone `relaymcp` (`cmd/relaymcp`, on the shared `pkg/relayapi` client) —
+  a client-side bridge over the REST API; and
+- embedded in the proxy (`proxy -mcp` stdio, or `proxy -api -mcp-api` mounting
+  `/mcp` behind JWT) via an in-process backend in `cmd/proxy/app/mcp.go`.
+
+See `doc/MCP.md`.
+
 The fork also ships operator runbooks for restrictive egress, relay-chain
 performance checks, UDP scan benchmarking, and release verification under
 `doc/`.
@@ -83,7 +94,7 @@ Before publishing a release:
    `go vet ./...`, `go test ./...`, `go test -race ./...`,
    `go run golang.org/x/vuln/cmd/govulncheck@latest ./...`, and
    `go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -include=G123 -tests ./...`.
-4. Run `go build ./cmd/proxy ./cmd/agent ./cmd/relayctl`.
+4. Run `go build ./cmd/proxy ./cmd/agent ./cmd/relayctl ./cmd/relaymcp`.
 5. Validate release and deployment metadata:
    `go run github.com/goreleaser/goreleaser/v2@v2.16.0 check --config .goreleaser.yaml`
    and

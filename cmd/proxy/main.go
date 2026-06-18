@@ -17,18 +17,22 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
-	"github.com/allsmog/ligolo-ng-relay/cmd/proxy/config"
-	"github.com/allsmog/ligolo-ng-relay/pkg/tlsutils"
 	"log"
 	"os"
+	"os/signal"
 	"runtime"
 	"runtime/pprof"
 	"strings"
+	"syscall"
 
 	"github.com/allsmog/ligolo-ng-relay/cmd/proxy/app"
+	"github.com/allsmog/ligolo-ng-relay/cmd/proxy/config"
 	"github.com/allsmog/ligolo-ng-relay/pkg/controller"
+	"github.com/allsmog/ligolo-ng-relay/pkg/tlsutils"
 	"github.com/desertbit/grumble"
 	"github.com/hashicorp/yamux"
 	"github.com/sirupsen/logrus"
@@ -59,6 +63,9 @@ func main() {
 	var webDisableUI = flag.Bool("no-web-ui", false, "disable the embedded Web UI while keeping the API server available")
 	var relayAutoHeal = flag.Bool("relay-autoheal", false, "enable the relay auto-heal reconciler")
 	var relayAutoHealApply = flag.Bool("relay-autoheal-apply", false, "allow relay auto-heal to apply supported repairs and failovers")
+	var mcpStdio = flag.Bool("mcp", false, "run an MCP server over stdio (headless; the proxy still listens for agents)")
+	var mcpReadOnly = flag.Bool("mcp-read-only", false, "expose only read-only MCP tools (applies to -mcp and -mcp-api)")
+	var mcpAPI = flag.Bool("mcp-api", false, "mount the MCP server over streamable HTTP at /mcp on the API server (implies -api)")
 	var webUser string
 	var webPassword string
 	var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to `file`")
@@ -89,7 +96,9 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
-	config.InitConfig(*configFile, *daemonMode)
+	app.MCPServerVersion = version
+	headless := *daemonMode || *mcpStdio
+	config.InitConfig(*configFile, headless)
 
 	if *apiEnabled {
 		config.Config.Set("web.enabled", true)
@@ -115,6 +124,11 @@ func main() {
 			logrus.Fatal(err)
 		}
 	}
+	if *mcpAPI {
+		config.Config.Set("web.enabled", true)
+		config.Config.Set("web.mcp", true)
+	}
+	config.Config.Set("web.mcpreadonly", *mcpReadOnly)
 
 	if *versionFlag {
 		fmt.Printf("Ligolo-ng Relay %s / %s / %s\n", version, commit, date)
@@ -132,7 +146,7 @@ func main() {
 		allowDomains = strings.Split(*domainWhitelist, ",")
 	}
 
-	if !*hideBanner && !*daemonMode {
+	if !*hideBanner && !headless {
 		app.App.SetPrintASCIILogo(func(a *grumble.App) {
 			a.Println("    __    _             __                       ")
 			a.Println("   / /   (_)___ _____  / /___        ____  ____ _")
@@ -221,7 +235,16 @@ func main() {
 	}
 	app.StartRelayAutoHealFromConfig()
 
-	if *daemonMode {
+	if *mcpStdio {
+		// MCP-over-stdio is the operator frontend; the proxy keeps serving
+		// agents in the background. stdout carries the MCP stream, so logs
+		// (logrus) must stay on stderr and the banner is suppressed (headless).
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := app.RunMCPStdio(ctx, *mcpReadOnly); err != nil && !errors.Is(err, context.Canceled) {
+			logrus.Fatal(err)
+		}
+	} else if *daemonMode {
 		proxyController.WaitForFinished()
 	} else {
 		// Grumble doesn't like cli args

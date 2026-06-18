@@ -68,5 +68,8 @@ terminal_agent:
 terminal_relayctl:
 	go run cmd/relayctl/main.go chains
 
+terminal_relaymcp:
+	go run cmd/relaymcp/main.go -http 127.0.0.1:9090
 
-.PHONY: all linux windows tidy update dep lint security relay-test release clean terminal terminal_relayctl
+
+.PHONY: all linux windows tidy update dep lint security relay-test release clean terminal terminal_relayctl terminal_relaymcp

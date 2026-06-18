@@ -53,6 +53,20 @@ builds:
       - amd64
       - arm64
 
+  - main: ./cmd/relaymcp
+    id: "relaymcp"
+    binary: relaymcp
+    env: [CGO_ENABLED=0]
+    goos:
+      - linux
+      - windows
+      - darwin
+      - freebsd
+      - openbsd
+    goarch:
+      - amd64
+      - arm64
+
 archives:
   - 
     id: "proxy"
@@ -71,6 +85,13 @@ archives:
   -
     id: "relayctl"
     ids: ['relayctl']
+    name_template: "{{ .ProjectName }}_{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: ['zip']
+  -
+    id: "relaymcp"
+    ids: ['relaymcp']
     name_template: "{{ .ProjectName }}_{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
@@ -119,6 +140,20 @@ dockers:
     dockerfile: build/package/relayctl.Dockerfile
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relayctl:{{ .Version }}-arm64"
+  - id: relaymcp-amd64
+    ids: ['relaymcp']
+    goos: linux
+    goarch: amd64
+    dockerfile: build/package/relaymcp.Dockerfile
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relaymcp:{{ .Version }}-amd64"
+  - id: relaymcp-arm64
+    ids: ['relaymcp']
+    goos: linux
+    goarch: arm64
+    dockerfile: build/package/relaymcp.Dockerfile
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relaymcp:{{ .Version }}-arm64"
 
 docker_manifests:
   - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relay-proxy:{{ .Version }}"
@@ -133,6 +168,10 @@ docker_manifests:
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relayctl:{{ .Version }}-amd64"
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relayctl:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relaymcp:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relaymcp:{{ .Version }}-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/ligolo-ng-relaymcp:{{ .Version }}-arm64"
 
 docker_signs:
   - id: docker-images

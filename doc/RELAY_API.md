@@ -365,6 +365,14 @@ relayctl -api http://127.0.0.1:8080 -token "$TOKEN" chain-autoroute --interface-
 when the report status is not `ok`, making it suitable for smoke tests before a
 relay chain is handed to operators or automation.
 
+## MCP server
+
+`relaymcp` exposes the same REST control plane to AI agents (e.g. Claude) as
+Model Context Protocol tools, over stdio or streamable HTTP. It authenticates
+with the identical `LIGOLO_API` / `LIGOLO_USER` / `LIGOLO_PASSWORD` /
+`LIGOLO_TOKEN` settings used by `relayctl`. See [MCP.md](MCP.md) for the tool
+catalog and client configuration.
+
 ## Web UI
 
 The Web UI includes a **Relay** page at `/relay`. It polls the same

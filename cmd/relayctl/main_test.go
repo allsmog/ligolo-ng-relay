@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/allsmog/ligolo-ng-relay/pkg/relayapi"
 )
 
 func TestParseTokenTTLSeconds(t *testing.T) {
@@ -46,11 +48,11 @@ func TestRunOpsFailsOnWarning(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := &client{
-		baseURL:    server.URL,
-		token:      "test-token",
-		httpClient: server.Client(),
-	}
+	c := relayapi.New(relayapi.Config{
+		BaseURL:    server.URL,
+		Token:      "test-token",
+		HTTPClient: server.Client(),
+	})
 	err := runOps(c, []string{"--with-ipv6", "--interface-prefix", "relaytest", "--fail-on-warning"})
 	if err == nil {
 		t.Fatal("runOps succeeded, want warning error")
@@ -80,11 +82,11 @@ func TestRunChainPlanQueriesPlanEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := &client{
-		baseURL:    server.URL,
-		token:      "test-token",
-		httpClient: server.Client(),
-	}
+	c := relayapi.New(relayapi.Config{
+		BaseURL:    server.URL,
+		Token:      "test-token",
+		HTTPClient: server.Client(),
+	})
 	if err := runChainPlan(c, []string{"--with-ipv6", "--interface-prefix", "relaytest", "--start"}); err != nil {
 		t.Fatalf("runChainPlan: %v", err)
 	}
@@ -113,11 +115,11 @@ func TestRunChainRepairQueriesPlanEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := &client{
-		baseURL:    server.URL,
-		token:      "test-token",
-		httpClient: server.Client(),
-	}
+	c := relayapi.New(relayapi.Config{
+		BaseURL:    server.URL,
+		Token:      "test-token",
+		HTTPClient: server.Client(),
+	})
 	if err := runChainRepair(c, []string{"--with-ipv6", "--interface-prefix", "relaytest", "--start", "--prune-conflicts"}); err != nil {
 		t.Fatalf("runChainRepair: %v", err)
 	}
@@ -149,11 +151,11 @@ func TestRunChainRepairApplyPostsRepairRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := &client{
-		baseURL:    server.URL,
-		token:      "test-token",
-		httpClient: server.Client(),
-	}
+	c := relayapi.New(relayapi.Config{
+		BaseURL:    server.URL,
+		Token:      "test-token",
+		HTTPClient: server.Client(),
+	})
 	if err := runChainRepair(c, []string{"--with-ipv6", "--interface-prefix", "relaytest", "--start", "--prune-conflicts", "--apply"}); err != nil {
 		t.Fatalf("runChainRepair apply: %v", err)
 	}
@@ -173,11 +175,11 @@ func TestRunChainFailoverQueriesPlanEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := &client{
-		baseURL:    server.URL,
-		token:      "test-token",
-		httpClient: server.Client(),
-	}
+	c := relayapi.New(relayapi.Config{
+		BaseURL:    server.URL,
+		Token:      "test-token",
+		HTTPClient: server.Client(),
+	})
 	if err := runChainFailover(c, []string{"--include-commands"}); err != nil {
 		t.Fatalf("runChainFailover: %v", err)
 	}
@@ -215,11 +217,11 @@ func TestRunChainFailoverApplyPostsRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := &client{
-		baseURL:    server.URL,
-		token:      "test-token",
-		httpClient: server.Client(),
-	}
+	c := relayapi.New(relayapi.Config{
+		BaseURL:    server.URL,
+		Token:      "test-token",
+		HTTPClient: server.Client(),
+	})
 	err := runChainFailover(c, []string{"--apply", "--include-commands", "--sessions", "agent-c", "--agents", "2,3"})
 	if err != nil {
 		t.Fatalf("runChainFailover apply: %v", err)
@@ -227,7 +229,7 @@ func TestRunChainFailoverApplyPostsRequest(t *testing.T) {
 }
 
 func TestRunChainFailoverApplyRequiresSelector(t *testing.T) {
-	c := &client{}
+	c := relayapi.New(relayapi.Config{})
 	err := runChainFailover(c, []string{"--apply"})
 	if err == nil {
 		t.Fatal("runChainFailover apply succeeded, want selector error")
@@ -251,11 +253,11 @@ func TestRunAutoHealQueriesStatusEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := &client{
-		baseURL:    server.URL,
-		token:      "test-token",
-		httpClient: server.Client(),
-	}
+	c := relayapi.New(relayapi.Config{
+		BaseURL:    server.URL,
+		Token:      "test-token",
+		HTTPClient: server.Client(),
+	})
 	if err := runAutoHeal(c, nil); err != nil {
 		t.Fatalf("runAutoHeal: %v", err)
 	}
@@ -298,11 +300,11 @@ func TestRunAutoHealRunPostsPolicyRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := &client{
-		baseURL:    server.URL,
-		token:      "test-token",
-		httpClient: server.Client(),
-	}
+	c := relayapi.New(relayapi.Config{
+		BaseURL:    server.URL,
+		Token:      "test-token",
+		HTTPClient: server.Client(),
+	})
 	err := runAutoHeal(c, []string{
 		"--run",
 		"--apply",
